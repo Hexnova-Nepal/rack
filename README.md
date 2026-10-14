@@ -46,9 +46,9 @@ Building on Windows needs nothing else. Building on Linux or macOS needs Wine fo
 GitHub Actions (`.github/workflows/build.yml`) runs the tests on Windows and builds both .exe files on every push. To publish a release:
 
 1. Set `version` in `package.json` and update `RELEASE_NOTES.md`.
-2. Commit, then tag: `git tag v1.1.0 && git push --tags`.
+2. Commit and push to `main`.
 
-The workflow checks that the tag matches the version, builds, signs (once SignPath is set up), and publishes the GitHub Release. Installed copies of Rack update themselves from that release.
+When that version has no release yet, the workflow tests, builds, signs (once SignPath is set up) and publishes the GitHub Release `v<version>`. Pushing a tag like `v1.2.0` works too. Installed copies of Rack update themselves from that release.
 
 ## Where things are
 
