@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'">
+<title>Choose a cover</title>
+<style>
+@font-face { font-family: 'Archivo'; src: url(fonts/archivo.woff2) format('woff2-variations'); font-weight: 100 900; font-stretch: 62% 125%; }
+:root { --bg: #1b1f27; --raise: #2a303c; --line: #353c4a; --ink: #eef0f4; --soft: #a5acba; --faint: #7b8394; --signal: #f2b544; }
+:root.light { --bg: #eef0f3; --raise: #ffffff; --line: #d3d8e0; --ink: #1b1f27; --soft: #485061; --faint: #646c7d; --signal: #a1600c; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; }
+body { font: 400 13px/1.35 'Archivo', system-ui, sans-serif; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.who { min-width: 0; flex: 0 1 320px; }
+.who b { display: block; font-size: 14px; font-weight: 750; font-stretch: 112%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status { display: block; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status.warn { color: var(--signal); }
+form { flex: 1 1 auto; display: flex; gap: 8px; min-width: 200px; }
+input[type=search] { flex: 1; min-width: 0; height: 36px; border-radius: 9px; border: 1px solid var(--line); background: var(--raise); color: var(--ink); padding: 0 12px; font: inherit; outline: none; }
+input[type=search]:focus { border-color: var(--soft); }
+button, label.tog { height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-weight: 500; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+button.solid { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+label.tog input { margin: 0; accent-color: var(--ink); }
+</style>
+</head>
+<body>
+  <div class="who"><b id="title"></b><span id="status">Point at a picture and press “Use this image”. Click a picture first to see it full size.</span></div>
+  <form id="f"><input id="q" type="search" aria-label="Search Google Images"><button class="solid" type="submit">Search</button></form>
+  <label class="tog"><input id="tall" type="checkbox" checked> Tall images only</label>
+  <button id="back" type="button">Back</button>
+  <button id="close" type="button">Cancel</button>
+<script src="picker.js"></script>
+</body>
+</html>

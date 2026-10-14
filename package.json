@@ -1,0 +1,101 @@
+{
+  "name": "rack",
+  "productName": "Rack",
+  "version": "1.1.0",
+  "description": "A game launcher for Windows: Steam, Epic, GOG, Ubisoft, EA, Battle.net, Xbox, folders and emulators.",
+  "main": "src/main/main.js",
+  "author": {
+    "name": "Hexnova Nepal",
+    "url": "https://github.com/Hexnova-Nepal"
+  },
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/run.js",
+    "dist": "electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "app.rack.launcher",
+    "productName": "Rack",
+    "copyright": "Copyright (c) 2026 Hexnova Nepal",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Hexnova-Nepal",
+        "repo": "rack",
+        "releaseType": "release"
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!node_modules/@koromix/koffi-!(win32-x64)/**",
+      "!node_modules/koffi/src/**/*.cc",
+      "!node_modules/koffi/doc/**"
+    ],
+    "asarUnpack": [
+      "node_modules/@koromix/koffi-win32-x64/**"
+    ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Rack",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "artifactName": "Rack-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Rack-Portable-${version}.${ext}"
+    }
+  },
+  "dependencies": {
+    "@koromix/koffi-win32-x64": "^3.3.3",
+    "electron-updater": "^6.8.9",
+    "fflate": "^0.8.3",
+    "koffi": "^3.3.3"
+  },
+  "homepage": "https://github.com/Hexnova-Nepal/rack",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hexnova-Nepal/rack.git"
+  }
+}

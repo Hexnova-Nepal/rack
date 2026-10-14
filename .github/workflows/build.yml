@@ -1,0 +1,126 @@
+# Builds and tests Rack on real Windows.
+# - Every push and pull request: run the tests on Windows, build the installer and the portable .exe, keep them as artifacts.
+# - A tag like v1.1.0: also publish a GitHub Release, which the installed Rack updates itself from.
+# Code signing: when the SignPath secrets below exist, the release files are signed before they are published.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test on Windows
+        run: npm test
+
+      - name: Check the version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "package.json says $v but the tag is ${GITHUB_REF_NAME}"; exit 1; }
+
+      - name: Build the installer and the portable .exe
+        run: npx electron-builder --win --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Smoke test the built app
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\win-unpacked\Rack.exe" -ArgumentList "--hidden" -PassThru
+          Start-Sleep -Seconds 12
+          if ($p.HasExited) { Write-Error "Rack quit on its own with code $($p.ExitCode)"; exit 1 }
+          Get-Process Rack -ErrorAction SilentlyContinue | Stop-Process -Force
+          Write-Host "Rack started and kept running"
+
+      - name: Check the window, the interface and the native helper
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 2
+          $p = Start-Process -FilePath "dist\win-unpacked\Rack.exe" -ArgumentList "--remote-debugging-port=9333" -PassThru
+          try { node scripts/ci-check-ui.mjs rack-window.png; $code = $LASTEXITCODE }
+          finally { Get-Process Rack -ErrorAction SilentlyContinue | Stop-Process -Force }
+          exit $code
+
+      - name: Install and uninstall with the installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\Rack-Setup-*.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Rack'
+          if (-not (Test-Path (Join-Path $dir 'Rack.exe'))) { Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -ErrorAction SilentlyContinue; Write-Error "Rack.exe not found after installing"; exit 1 }
+          if (-not (Test-Path (Join-Path $dir 'resources\app-update.yml'))) { Write-Error "app-update.yml missing, so updates would not work"; exit 1 }
+          Start-Process -FilePath (Join-Path $dir 'Uninstall Rack.exe') -ArgumentList '/S' -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path (Join-Path $dir 'Rack.exe')); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path (Join-Path $dir 'Rack.exe')) { Write-Error "Rack.exe still there after uninstalling"; exit 1 }
+          Write-Host "Installer and uninstaller work"
+
+      - name: Keep the window screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rack-window
+          path: rack-window.png
+          if-no-files-found: ignore
+
+      - name: Keep the build
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: rack-windows
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+
+      # Signing with the free SignPath Foundation certificate, once the project is accepted.
+      # Add the secrets SIGNPATH_API_TOKEN and SIGNPATH_ORGANIZATION_ID; see CODE_SIGNING.md.
+      - name: Sign with SignPath
+        id: sign
+        if: startsWith(github.ref, 'refs/tags/v') && env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: rack
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir=dist
+          if [ -d signed ]; then
+            dir=signed
+            node scripts/refresh-latest-yml.js signed
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            "$dir"/Rack-Setup-*.exe "$dir"/Rack-Setup-*.exe.blockmap "$dir"/Rack-Portable-*.exe "$dir"/latest.yml \
+            --title "Rack ${GITHUB_REF_NAME#v}" --notes-file RELEASE_NOTES.md

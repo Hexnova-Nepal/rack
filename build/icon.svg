@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="1024" height="1024">
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="#1b1f27"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="53.5" fill="none" stroke="#353c4a" stroke-width="1"/>
+  <!-- three cartridges in a rack; the middle one lifted and lit -->
+  <g fill="none" stroke="#8a93a5" stroke-width="11" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M52 186 V100 a8 8 0 0 1 8 -8 h30 l12 12 V186"/>
+    <path d="M154 186 V100 a8 8 0 0 1 8 -8 h30 l12 12 V186"/>
+  </g>
+  <path d="M103 168 V66 a8 8 0 0 1 8 -8 h30 l12 12 V168 z" fill="#eef0f4" stroke="#eef0f4" stroke-width="11" stroke-linejoin="round"/>
+  <path d="M114 84 h28 M114 96 h28" stroke="#1b1f27" stroke-width="7" stroke-linecap="round"/>
+  <rect x="38" y="182" width="180" height="22" rx="9" fill="#1b1f27" stroke="#eef0f4" stroke-width="11" stroke-linejoin="round"/>
+</svg>

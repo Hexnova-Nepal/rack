@@ -1,0 +1,11 @@
+const p = new URLSearchParams(location.search);
+if (p.get('dark') !== '1') document.documentElement.classList.add('light');
+const $ = (id) => document.getElementById(id);
+$('title').textContent = `Choose a cover for ${p.get('name') || 'this game'}`;
+$('q').value = p.get('q') || '';
+$('f').addEventListener('submit', (e) => { e.preventDefault(); window.picker.send('q', $('q').value); window.picker.send('search', $('q').value); });
+$('tall').addEventListener('change', () => { window.picker.send('q', $('q').value); window.picker.send('tall', $('tall').checked); });
+$('back').addEventListener('click', () => window.picker.send('back'));
+$('close').addEventListener('click', () => window.picker.send('close'));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.picker.send('close'); });
+window.picker.onStatus(({ text, kind }) => { $('status').textContent = text; $('status').className = kind || ''; });
