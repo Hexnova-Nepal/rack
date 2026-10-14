@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' rack: https: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rack</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="titlebar"><span class="wordmark">RACK</span></div>
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Library"></nav>
+  <main>
+    <div class="top">
+      <label class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input id="search" type="search" placeholder="Search your games" aria-label="Search your games" autocomplete="off"><kbd>Ctrl F</kbd></label>
+      <div class="spacer"></div>
+      <button class="btn" data-act="go" data-view="scan"><svg class="i" viewBox="0 0 24 24"><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3M4 12h16"/></svg>Scan for games</button>
+      <button class="btn" data-act="addManual"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add game</button>
+    </div>
+    <div id="view" tabindex="-1"></div>
+    <div id="dock" class="dock"></div>
+  </main>
+</div>
+<div id="modal" hidden></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<script src="vendor/hairline-kernel.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
