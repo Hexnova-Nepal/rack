@@ -1,6 +1,7 @@
 # Builds and tests Rack on real Windows.
 # - Every push and pull request: run the tests on Windows, build the installer and the portable .exe, keep them as artifacts.
-# - A tag like v1.1.0: also publish a GitHub Release, which the installed Rack updates itself from.
+# - A push to main whose package.json version has no release yet (or a tag like v1.1.0): also publish
+#   a GitHub Release, which the installed Rack updates itself from. Releasing is: bump the version, push.
 # Code signing: when the SignPath secrets below exist, the release files are signed before they are published.
 name: build
 
@@ -13,6 +14,11 @@ on:
 
 permissions:
   contents: write
+
+# one run at a time per branch, so two quick pushes can't both publish the same version
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   windows:
@@ -33,12 +39,23 @@ jobs:
       - name: Test on Windows
         run: npm test
 
-      - name: Check the version matches the tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Decide whether this run publishes a release
+        id: rel
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           v=$(node -p "require('./package.json').version")
-          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "package.json says $v but the tag is ${GITHUB_REF_NAME}"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "package.json says $v but the tag is $GITHUB_REF_NAME"; exit 1; }
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ] && ! gh release view "v$v" > /dev/null 2>&1; then
+            echo "Version $v has no release yet, so this run publishes one"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build the installer and the portable .exe
         run: npx electron-builder --win --publish never
@@ -99,7 +116,7 @@ jobs:
       # Add the secrets SIGNPATH_API_TOKEN and SIGNPATH_ORGANIZATION_ID; see CODE_SIGNING.md.
       - name: Sign with SignPath
         id: sign
-        if: startsWith(github.ref, 'refs/tags/v') && env.SIGNPATH_API_TOKEN != ''
+        if: steps.rel.outputs.publish == 'true' && env.SIGNPATH_API_TOKEN != ''
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -111,16 +128,17 @@ jobs:
           output-artifact-directory: signed
 
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.rel.outputs.publish == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.rel.outputs.version }}
         run: |
           dir=dist
           if [ -d signed ]; then
             dir=signed
             node scripts/refresh-latest-yml.js signed
           fi
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "v$VERSION" --target "$GITHUB_SHA" \
             "$dir"/Rack-Setup-*.exe "$dir"/Rack-Setup-*.exe.blockmap "$dir"/Rack-Portable-*.exe "$dir"/latest.yml \
-            --title "Rack ${GITHUB_REF_NAME#v}" --notes-file RELEASE_NOTES.md
+            --title "Rack $VERSION" --notes-file RELEASE_NOTES.md
