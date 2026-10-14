@@ -24,6 +24,8 @@
 
 **Library backup.** Save your whole library and covers to one file, and restore from it.
 
+**Covers on the rack.** Each cartridge in the Home rack shows its game's cover. Your most played game stands in front; point at another to pull it out and see its cover.
+
 **Looks.**
 - New default type: Archivo Expanded titles with Geist text
 - Four more font choices

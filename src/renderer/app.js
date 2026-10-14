@@ -130,9 +130,10 @@ const isUninstalling = (g) => (S.uninstalling || []).includes(g.id);
 const visible = (g) => !g.hidden && !g.notInstalled;
 function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
+const coverUrl = (g) => (g && g.cover ? `${window.RACK_COVER_BASE || 'rack://cover/'}${encodeURIComponent(g.cover)}` : '');
 function coverHTML(g, { src = true, state = true } = {}) {
   const art = g.cover
-    ? `<img src="${window.RACK_COVER_BASE || 'rack://cover/'}${encodeURIComponent(g.cover)}" alt="" loading="lazy" draggable="false">`
+    ? `<img src="${coverUrl(g)}" alt="" loading="lazy" draggable="false">`
     : `<div class="ph" style="background:linear-gradient(160deg,hsl(${hue(g.name)} 26% 34%),hsl(${(hue(g.name) + 40) % 360} 30% 18%))">${esc(g.name)}</div>`;
   const st = !state ? '' : g.missing ? '<span class="state">Missing</span>' : isRunning(g) ? '<span class="state go">Playing</span>'
     : isLaunching(g) ? '<span class="state">Starting</span>' : isUninstalling(g) ? '<span class="state">Uninstalling</span>' : g.notInstalled ? '<span class="state">Not installed</span>' : '';
@@ -259,7 +260,12 @@ function renderTitlebar() {
 
 /* ---------- the rack figure ---------- */
 
-let FIG = null, rackEl = null, rackHandle = null, rackRest = -1, rackSlot = -1, rackList = [];
+let FIG = null, rackEl = null, rackHandle = null, rackRest = -2, rackSlot = -1, rackList = [];
+// The rack holds seven cartridges, back (0) to front (6). The most played game stands in front,
+// where its whole cover shows, so list position k sits in cartridge 6 - k.
+const RACK_N = 7;
+const cartOf = (k) => (k >= 0 ? RACK_N - 1 - k : -1);
+const rackCovers = () => { if (rackHandle && rackHandle.covers) rackHandle.covers(Array.from({ length: RACK_N }, (_, c) => coverUrl(rackList[cartOf(c)]))); };
 window.hairline = (fig) => { FIG = fig; };
 const figReady = import('./vendor/cartridges.js');
 
@@ -281,14 +287,15 @@ function rackStage(rest) {
     set textContent(v) {
       this._t = v;
       const m = /slot (\d+)/.exec(v || '');
-      rackSlot = m ? Number(m[1]) - 1 : -1;
+      rackSlot = m ? cartOf(Number(m[1]) - 1) : -1;
       const g = rackSlot >= 0 ? rackList[rackSlot] : null;
       ui.preview = g ? g.id : null;
       renderHeroInfo();
       document.querySelectorAll('.thumbs button').forEach((b, i) => b.classList.toggle('on', i === rackSlot));
     },
   };
-  rackHandle = FIG.mount({ stage: rackEl, svg, read }, FIG.range[1]);
+  // lift far enough that a pulled cartridge shows most of its label
+  rackHandle = FIG.mount({ stage: rackEl, svg, read }, 46);
   rackEl.addEventListener('click', () => { const g = rackList[rackSlot]; if (g) call(R.feature(g.id)); });
   rackEl.addEventListener('contextmenu', (e) => { const g = rackList[rackSlot]; if (g) { e.preventDefault(); e.stopPropagation(); R.menu([g.id]); } });
   rackRest = rest;
@@ -339,7 +346,7 @@ function renderHeroInfo() {
 function renderHome() {
   const f = featured();
   rackList = rackGames();
-  const rest = f ? Math.max(0, rackList.indexOf(f)) : 2;
+  const rest = f ? cartOf(rackList.indexOf(f)) : -1;
   const found = (S.found || []).length;
   const banner = found ? `<div class="banner">${ic('sparkle')}<span><b>${found} new ${found === 1 ? 'game' : 'games'} found.</b> ${esc(S.found.slice(0, 3).map((x) => x.name).join(', '))}${found > 3 ? '…' : ''}</span><span class="spacer"></span><button class="btn small solid" data-act="go" data-view="found">Review</button></div>` : '';
   if (!S.games.filter(visible).length) {
@@ -378,6 +385,7 @@ function afterHome() {
     const el = rackStage(Number(slot.dataset.rest));
     if (el) slot.replaceWith(el);
   }
+  rackCovers();
   renderHeroInfo();
 }
 
@@ -1225,7 +1233,7 @@ document.addEventListener('dragstart', (e) => e.preventDefault());
 // thumbnails under the rack point at their cartridge
 document.addEventListener('pointerover', (e) => {
   const t = e.target.closest && e.target.closest('.thumbs button');
-  if (t && rackHandle && rackHandle.pick) rackHandle.pick(Number(t.dataset.slot));
+  if (t && rackHandle && rackHandle.pick) rackHandle.pick(cartOf(Number(t.dataset.slot)));
 });
 document.addEventListener('pointerout', (e) => {
   const t = e.target.closest && e.target.closest('.thumbs');
