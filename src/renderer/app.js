@@ -454,20 +454,36 @@ function playButton(g, big = true) {
 function heroInfoHTML(g) {
   const col = (g.collections || []).map((id) => S.collections.find((c) => c.id === id)).filter(Boolean)[0];
   const pinned = S.settings.featuredId === g.id;
+  // six fixed slots, so pointing at different games never changes the layout
+  const none = '<span class="muted">—</span>';
+  const cell = (k, v) => `<div><dt>${k}</dt><dd title="${esc(String(v).replace(/<[^>]+>/g, ''))}">${v}</dd></div>`;
+  const third = g.missing ? cell('Files', '<span style="color:var(--signal)">Not found</span>')
+    : g.status ? cell('Status', esc(STATUS_LABEL[g.status])) : col ? cell('Collection', esc(col.name)) : cell('Status', none);
   return `
-    <h1 class="title ${g.name.length > 14 ? 'long' : ''}">${esc(g.name)}</h1>
+    <div class="tbox"><h1 class="title">${esc(g.name)}</h1></div>
     <dl class="facts">
-      <div><dt>Last played</dt><dd>${esc(ago(g.lastPlayed))}</dd></div>
-      <div><dt>Time played</dt><dd class="num">${esc(hoursLong(g.total))}</dd></div>
-      <div><dt>From</dt><dd>${esc(g.source === 'emulator' ? `${g.platform || 'Emulator'} emulator` : SRC[g.source])}</dd></div>
-      ${(g.genres || []).length ? `<div><dt>Genre</dt><dd>${esc(g.genres.slice(0, 2).join(', '))}</dd></div>` : ''}
-      ${g.year ? `<div><dt>Released</dt><dd>${g.year}</dd></div>` : ''}
-      ${g.status ? `<div><dt>Status</dt><dd>${esc(STATUS_LABEL[g.status])}</dd></div>` : col ? `<div><dt>Collection</dt><dd>${esc(col.name)}</dd></div>` : ''}
-      ${g.missing ? '<div><dt>Files</dt><dd style="color:var(--signal)">Not found</dd></div>' : ''}
+      ${cell('Last played', esc(ago(g.lastPlayed)))}
+      ${cell('Time played', `<span class="num">${esc(hoursLong(g.total))}</span>`)}
+      ${cell('From', esc(g.source === 'emulator' ? `${g.platform || 'Emulator'} emulator` : SRC[g.source]))}
+      ${cell('Genre', (g.genres || []).length ? esc(g.genres.slice(0, 2).join(', ')) : none)}
+      ${cell('Released', g.year ? String(g.year) : none)}
+      ${third}
     </dl>
     <p class="blurb">${g.description ? esc(g.description) : '<span class="muted">No description yet. You can write one in Details.</span>'}</p>
     <div class="actions">${playButton(g)}<button class="btn big" data-act="open" data-id="${g.id}">Details</button>
       <button class="btn icon ${pinned ? 'on' : ''}" data-act="pin" data-id="${g.id}" aria-label="${pinned ? 'Stop featuring this game' : 'Feature this game'}" title="${pinned ? 'Featured. Click to go back to your last played game.' : 'Keep this game featured'}">${ic('star')}</button></div>`;
+}
+window.addEventListener('resize', () => fitTitle(document.querySelector('#hero-info h1')));
+/** Every name gets the same size, in a box two lines tall; only a name that won't fit shrinks. */
+function fitTitle(h1) {
+  if (!h1) return;
+  h1.style.fontSize = '';
+  h1.classList.remove('squeeze');
+  const box = h1.parentElement;
+  let size = parseFloat(getComputedStyle(h1).fontSize);
+  const over = () => h1.scrollHeight > box.clientHeight + 1 || h1.scrollWidth > h1.clientWidth + 1;
+  while (over() && size > 26) { size = Math.max(26, size * 0.92); h1.style.fontSize = `${size}px`; }
+  if (over()) h1.classList.add('squeeze'); // a very long name: break words and clamp to two lines
 }
 
 function renderHeroInfo() {
@@ -476,9 +492,10 @@ function renderHeroInfo() {
   const g = (ui.preview && byId(ui.preview)) || featured();
   if (!g) return;
   info.innerHTML = heroInfoHTML(g);
+  fitTitle(info.querySelector('h1'));
   cov.innerHTML = coverHTML(g, { src: false });
   cov.dataset.gid = g.id;
-  if (cap) cap.textContent = ui.preview ? `${g.name}, ${hours(g.total)}` : '';
+  if (cap) { cap.textContent = ui.preview ? `${g.name}, ${hours(g.total)}` : ''; cap.parentElement.classList.toggle('named', !!ui.preview); }
 }
 
 function renderHome() {
@@ -501,7 +518,7 @@ function renderHome() {
     <div id="hero-info"></div>
     <div class="rackwrap"><div id="rackslot" data-rest="${rest}"></div>
       <div class="thumbs">${rackList.map((g, i) => (g ? `<button class="${isPinned(g.id) ? 'pinned' : ''}" data-act="feature" data-id="${g.id}" data-gid="${g.id}" data-slot="${i}" title="${esc(g.name)}${isPinned(g.id) ? ' · kept on the rack' : ''}" aria-label="Feature ${esc(g.name)}">${coverHTML(g, { src: false, state: false })}</button>` : `<span class="thumbgap" data-slot="${i}"></span>`)).join('')}</div>
-      <div class="rackcap"><span>Your most played. Drag a game onto a cartridge to keep it there.</span><strong id="rack-name"></strong></div></div>
+      <div class="rackcap"><span title="Your most played. Point at one to preview it, click to feature it, or drag a game onto one to keep it there.">Your most played. Drag a game onto a cartridge to keep it there.</span><strong id="rack-name"></strong></div></div>
   </section>
   ${homeRows().filter((r) => r.on).map(shelfHTML).join('')}<div style="height:24px"></div>`;
 }
