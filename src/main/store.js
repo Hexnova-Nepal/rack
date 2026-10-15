@@ -58,6 +58,8 @@ const DEFAULT = {
     homeLayout: 'shelves',      // shelves | desktop
     homeRows: null,             // [{ id, on }]; null is the default set
     desktop: null,              // games placed on the Home desktop: [{ id, c, r }] grid cells; null until you place one
+    rackCount: 7,               // cartridges on the rack, 3 to 12
+    rackPins: [],               // games kept on the rack, by slot from the front; null is an empty slot
   },
 };
 

@@ -201,13 +201,70 @@ function featured() {
   return (f && visible(f) ? f : null) || [...S.games].filter(visible).sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0))[0] || null;
 }
 /** The seven games on the rack: most played first, topped up by recently played. */
+/* The rack: games you keep on it stay in their slot; your most played games fill the others. */
+const rackPinIds = () => (Array.isArray(S.settings.rackPins) ? S.settings.rackPins : []);
+const isPinned = (id) => rackPinIds().includes(id);
+/** Kept games by slot (front = 0); one kept in a slot past the end moves to the first free slot. */
+function rackPinsShown() {
+  const n = rackN(), shown = Array(n).fill(null), extra = [];
+  rackPinIds().forEach((id, i) => {
+    const g = id && byId(id);
+    if (!g || !visible(g)) return;
+    if (i < n && !shown[i]) shown[i] = g; else extra.push(g);
+  });
+  for (const g of extra) { const j = shown.indexOf(null); if (j < 0) break; shown[j] = g; }
+  return shown;
+}
+/** The games on the rack by slot, front first; a slot can be empty in a small library. */
 function rackGames() {
-  const top = mostPlayed().slice(0, 7);
-  if (top.length < 7) {
-    const more = S.games.filter((g) => visible(g) && !top.includes(g)).sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || b.added - a.added);
-    top.push(...more.slice(0, 7 - top.length));
+  const shown = rackPinsShown(), kept = new Set(shown.filter(Boolean).map((g) => g.id));
+  const recent = S.games.filter((g) => visible(g) && !g.total).sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || b.added - a.added);
+  const fill = [...mostPlayed(), ...recent].filter((g, i, a) => !kept.has(g.id) && a.indexOf(g) === i);
+  return shown.map((g) => g || fill.shift() || null);
+}
+/** Keeps a game in a slot (front = 0). A game already kept elsewhere moves there; one kept in that slot makes way. */
+async function pinAt(id, slot) {
+  const g = byId(id);
+  if (!g) return;
+  const pins = [...rackPinIds()];
+  const shown = rackPinsShown();
+  // work from what's shown, so slots line up with the cartridges you see
+  const bySlot = shown.map((x) => (x ? x.id : null));
+  const from = bySlot.indexOf(id), there = bySlot[slot];
+  if (from === slot) return;
+  if (from >= 0) bySlot[from] = null;
+  bySlot[slot] = id;
+  let msg = `${g.name} stays on the rack now`;
+  if (there && there !== id) {
+    if (from >= 0) { bySlot[from] = there; msg = `Swapped ${g.name} and ${byId(there).name}`; } else msg = `${g.name} took ${byId(there).name}’s place on the rack`;
   }
-  return top;
+  // kept games that don't fit any more (fewer cartridges) stay kept after the visible ones
+  const rest = pins.filter((x) => x && !bySlot.includes(x) && x !== there);
+  while (bySlot.length && bySlot[bySlot.length - 1] == null) bySlot.pop();
+  await call(R.setSettings({ rackPins: [...bySlot, ...rest] }), msg);
+}
+/** "Always on the rack": on puts each game in the first slot that doesn't hold a kept game. */
+async function pinToggle(ids, on) {
+  const all = ids.map(byId).filter(Boolean);
+  if (!all.length) return;
+  const want = on == null ? !all.every((g) => isPinned(g.id)) : on;
+  if (!want) {
+    const pins = rackPinIds().map((x) => (ids.includes(x) ? null : x));
+    while (pins.length && pins[pins.length - 1] == null) pins.pop();
+    return call(R.setSettings({ rackPins: pins }), all.length === 1 ? `${all[0].name} is no longer kept on the rack` : `${all.length} games are no longer kept on the rack`);
+  }
+  const bySlot = rackPinsShown().map((x) => (x ? x.id : null));
+  const extra = rackPinIds().filter((x) => x && !bySlot.includes(x));
+  let added = 0;
+  for (const g of all) {
+    if (bySlot.includes(g.id) || extra.includes(g.id)) continue;
+    const j = bySlot.indexOf(null);
+    if (j < 0) break;
+    bySlot[j] = g.id; added++;
+  }
+  if (!added) return toast(bySlot.indexOf(null) < 0 ? 'Every cartridge already holds a game you keep. Drag one onto a cartridge to swap, or add cartridges in Settings › Home.' : 'Already on the rack');
+  while (bySlot.length && bySlot[bySlot.length - 1] == null) bySlot.pop();
+  return call(R.setSettings({ rackPins: [...bySlot, ...extra] }), added === 1 ? `${all.find((g) => bySlot.includes(g.id)).name} stays on the rack now` : `${added} games stay on the rack now`);
 }
 
 const SORTS = {
@@ -339,22 +396,24 @@ function renderTitlebar() {
 /* ---------- the rack figure ---------- */
 
 let FIG = null, rackEl = null, rackHandle = null, rackRest = -2, rackSlot = -1, rackList = [];
-// The rack holds seven cartridges, back (0) to front (6). The most played game stands in front,
-// where its whole cover shows, so list position k sits in cartridge 6 - k.
-const RACK_N = 7;
-const cartOf = (k) => (k >= 0 ? RACK_N - 1 - k : -1);
-const rackCovers = () => { if (rackHandle && rackHandle.covers) rackHandle.covers(Array.from({ length: RACK_N }, (_, c) => coverUrl(rackList[cartOf(c)]))); };
+// The rack holds 3 to 12 cartridges (Settings › Home), back (0) to front (n - 1). List position 0, the
+// front, is where the whole cover shows, so list position k sits in cartridge n - 1 - k.
+const rackN = () => Math.max(3, Math.min(12, Math.round(Number(S && S.settings.rackCount) || 7)));
+const cartOf = (k) => (k >= 0 ? rackN() - 1 - k : -1);
+const rackCovers = () => { if (rackHandle && rackHandle.covers) rackHandle.covers(Array.from({ length: rackN() }, (_, c) => coverUrl(rackList[cartOf(c)]))); };
 window.hairline = (fig) => { FIG = fig; };
 const figReady = import('./vendor/cartridges.js');
 
 function rackStage(rest) {
   if (!FIG) return null;
-  if (rackEl && rest === rackRest) return rackEl;
+  const key = `${rest}/${rackN()}`;
+  if (rackEl && key === rackRest) return rackEl;
   if (rackHandle) rackHandle.destroy();
   rackEl = document.createElement('div');
   rackEl.id = 'rack';
   rackEl.dataset.hairline = FIG.name;
   rackEl.dataset.rest = String(rest);
+  rackEl.dataset.count = String(rackN());
   rackEl.setAttribute('role', 'img');
   rackEl.setAttribute('aria-label', 'Your most played games, as cartridges in a rack');
   HL.inject(document);
@@ -370,14 +429,14 @@ function rackStage(rest) {
       ui.preview = g ? g.id : null;
       renderHeroInfo();
       updateWall();
-      document.querySelectorAll('.thumbs button').forEach((b, i) => b.classList.toggle('on', i === rackSlot));
+      document.querySelectorAll('.thumbs button').forEach((b) => b.classList.toggle('on', Number(b.dataset.slot) === rackSlot));
     },
   };
   // lift far enough that a pulled cartridge shows most of its label
   rackHandle = FIG.mount({ stage: rackEl, svg, read }, 46);
   rackEl.addEventListener('click', () => { const g = rackList[rackSlot]; if (g) call(R.feature(g.id)); });
   rackEl.addEventListener('contextmenu', (e) => { const g = rackList[rackSlot]; if (g) { e.preventDefault(); e.stopPropagation(); R.menu([g.id]); } });
-  rackRest = rest;
+  rackRest = key;
   return rackEl;
 }
 
@@ -441,8 +500,8 @@ function renderHome() {
     <div id="hero-cover"></div>
     <div id="hero-info"></div>
     <div class="rackwrap"><div id="rackslot" data-rest="${rest}"></div>
-      <div class="thumbs">${rackList.map((g, i) => `<button data-act="feature" data-id="${g.id}" data-gid="${g.id}" data-slot="${i}" title="${esc(g.name)}" aria-label="Feature ${esc(g.name)}">${coverHTML(g, { src: false, state: false })}</button>`).join('')}</div>
-      <div class="rackcap"><span>Your most played. Point at one to preview it, click to feature it.</span><strong id="rack-name"></strong></div></div>
+      <div class="thumbs">${rackList.map((g, i) => (g ? `<button class="${isPinned(g.id) ? 'pinned' : ''}" data-act="feature" data-id="${g.id}" data-gid="${g.id}" data-slot="${i}" title="${esc(g.name)}${isPinned(g.id) ? ' · kept on the rack' : ''}" aria-label="Feature ${esc(g.name)}">${coverHTML(g, { src: false, state: false })}</button>` : `<span class="thumbgap" data-slot="${i}"></span>`)).join('')}</div>
+      <div class="rackcap"><span>Your most played. Drag a game onto a cartridge to keep it there.</span><strong id="rack-name"></strong></div></div>
   </section>
   ${homeRows().filter((r) => r.on).map(shelfHTML).join('')}<div style="height:24px"></div>`;
 }
@@ -566,7 +625,7 @@ function afterHome() {
   }
   rackCovers();
   const w = wallCfg();
-  if (w.source !== 'off' && w.follow) askArt([...rackList.map((g) => g.id), (featured() || {}).id]);
+  if (w.source !== 'off' && w.follow) askArt([...rackList.filter(Boolean).map((g) => g.id), (featured() || {}).id]);
   renderHeroInfo();
 }
 
@@ -761,6 +820,7 @@ function renderDetail() {
                <div class="srow" style="border-top:0;padding-top:0"><b>Run as administrator</b><button class="toggle" role="switch" aria-checked="${dr.admin}" data-act="draftToggle" data-key="admin" aria-label="Run as administrator"></button><small>Only if the game won’t start without it</small></div>`}
         ${g.notInstalled ? '' : actionsEditor(g)}
         <div class="srow"><b>Favourite</b><button class="toggle" role="switch" aria-checked="${dr.favourite}" data-act="draftToggle" data-key="favourite" aria-label="Favourite"></button><small>Shows in Favourites</small></div>
+        <div class="srow"><b>Always on the rack</b><button class="toggle" role="switch" aria-checked="${isPinned(g.id)}" data-act="togglePin" data-id="${g.id}" aria-label="Always on the rack" ${g.hidden || g.notInstalled ? 'disabled' : ''}></button><small>Keeps it on the rack on Home, whatever you play most</small></div>
         <div class="srow"><b>Hide this game</b><button class="toggle" role="switch" aria-checked="${!!g.hidden}" data-act="toggleHidden" data-id="${g.id}" aria-label="Hide this game"></button><small>Keeps it in your library, out of sight</small></div>
         <div class="field" style="margin-top:12px"><span>Collections</span><div class="chips">${colChips}
           ${free.length ? `<select data-act="addCol" aria-label="Add to a collection"><option value="">Add to…</option>${free.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>` : S.collections.length ? '' : '<span class="muted" style="font-size:12px">Make a collection with “New collection” on the left.</span>'}</div></div>
@@ -979,7 +1039,7 @@ function wallPanel() {
     ${on ? `<div class="field"><span>Change the picture</span><div><select data-act="wallEvery" aria-label="Change the picture">${[[0, 'Never, keep one'], [1, 'Every minute'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [30, 'Every 30 minutes'], [60, 'Every hour'], [180, 'Every 3 hours']].map(([v, l]) => `<option value="${v}" ${Number(w.every) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
     ${wtog('byTime', 'Change with the time of day', 'Different pictures for morning, day, evening and night. A part of the day without its own folder uses the pictures above.')}
     ${w.byTime ? `<div class="slots">${SLOTS.map(([k, l, h]) => `<div class="slotrow${slotOf() === k ? ' now' : ''}"><b>${l}<small>${h}${slotOf() === k ? ' · now' : ''}</small></b>${folderRow(k, w.times[k], (lists[k] || []).length, 'Uses the pictures above')}</div>`).join('')}</div>` : ''}
-    ${wtog('follow', 'Follow the selected game', 'On Home and on a game’s page, show that game’s artwork')}
+    ${wtog('follow', 'Follow the game you point at', 'Shows the artwork of the game under the pointer, anywhere in Rack. Otherwise Home shows the featured game, and a game’s page shows that game.')}
     <div class="grid2">
       <div class="field"><span>Dim <output id="wall-dim-v">${w.dim}%</output></span><input type="range" min="0" max="90" step="5" value="${w.dim}" data-act="wallRange" data-key="dim" aria-label="Dim"></div>
       <div class="field"><span>Blur <output id="wall-blur-v">${w.blur} px</output></span><input type="range" min="0" max="30" step="1" value="${w.blur}" data-act="wallRange" data-key="blur" aria-label="Blur"></div>
@@ -991,6 +1051,9 @@ function wallPanel() {
 function homePanel() {
   const st = S.settings, desk = st.homeLayout === 'desktop', rows = homeRows();
   return `<div class="panel"><h2 class="title">Home</h2><p>Shelves show your rows of games under the rack. Desktop lets you place games anywhere, like icons on a desktop.</p>
+    <div class="field"><span>Cartridges on the rack</span><div class="countrow"><select data-act="rackCount" aria-label="Cartridges on the rack">${Array.from({ length: 10 }, (_, i) => i + 3).map((n) => `<option value="${n}" ${rackN() === n ? 'selected' : ''}>${n} cartridges</option>`).join('')}</select>
+      <span class="muted">Your most played games fill the rack. Drag a game onto a cartridge to keep it there.</span></div></div>
+    ${rackPinsShown().some(Boolean) ? `<div class="field"><span>Kept on the rack</span><div class="chips">${rackPinsShown().map((g, i) => (g ? `<button class="tag" data-act="unpin" data-id="${g.id}" title="Slot ${i + 1} from the front" aria-label="Stop keeping ${esc(g.name)} on the rack">${esc(g.name)} ×</button>` : '')).join('')}</div></div>` : ''}
     <div class="field"><span>Layout</span><div><div class="seg big" role="group" aria-label="Home layout">${[['shelves', 'Shelves'], ['desktop', 'Desktop']].map(([v, l]) => `<button aria-pressed="${(st.homeLayout || 'shelves') === v}" data-act="homeLayout" data-v="${v}">${l}</button>`).join('')}</div></div></div>
     ${desk ? `<div class="srow"><b>Desktop</b><span></span><small>Drag games around on Home. Drop games on Home in the sidebar, or right-click a game, to add it.</small></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" data-act="deskTidy">${ic('grid')}Tidy up</button><button class="btn ghost" data-act="deskClear">Clear the desktop</button></div>`
@@ -1158,7 +1221,8 @@ function wallTarget() {
   if (w.source === 'off') return null;
   if (w.where === 'home' && ui.view !== 'home') return null;
   if (w.follow) {
-    const g = ui.view === 'home' ? byId(ui.preview) || featured() : ui.view === 'detail' ? byId(ui.detail.id) : null;
+    // the game under the pointer anywhere (a tile, a row, a desktop icon, a cartridge), else Home's featured game or the open game
+    const g = byId(ui.point) || (ui.view === 'home' ? byId(ui.preview) || featured() : ui.view === 'detail' ? byId(ui.detail.id) : null);
     if (g && (g.hero || g.cover)) {
       if (!g.hero) askArt([g.id]);
       const url = heroUrl(g) || coverUrl(g);
@@ -1206,12 +1270,30 @@ function showWall(t) {
   img.onerror = () => { wall.bad.add(t.url); if (wall.shown === t.url) { wall.shown = ''; wall.pick = null; updateWall(true); } };
   img.src = t.url;
 }
-/** Re-decides the wallpaper; pointing at games on Home waits a moment so it doesn't flicker. */
-function updateWall(now = false) {
+/** Re-decides the wallpaper. Pointing at a game waits a moment, and going back waits longer, so moving across games doesn't flicker. */
+function updateWall(now = false, slow = false) {
   if (!S) return;
   clearTimeout(wall.timer);
-  wall.timer = setTimeout(() => showWall(wallTarget()), now || !wall.shown ? 0 : 280);
+  wall.timer = setTimeout(() => showWall(wallTarget()), now || !wall.shown ? 0 : slow ? 750 : 280);
 }
+// the background follows the game you point at, or move to with the keyboard
+function pointAt(id) {
+  if (ui.point === id) return;
+  ui.point = id;
+  updateWall(false, !id);
+}
+document.addEventListener('pointerover', (e) => { const t = e.target.closest && e.target.closest('#view [data-gid]'); if (t) pointAt(t.dataset.gid); });
+document.addEventListener('pointerout', (e) => {
+  const from = e.target.closest && e.target.closest('#view [data-gid]');
+  const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('#view [data-gid]') : null;
+  if (from && !to && from.dataset.gid === ui.point) pointAt(null);
+});
+document.addEventListener('focusout', (e) => {
+  const from = e.target.closest && e.target.closest('#view [data-gid]');
+  const to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('#view [data-gid]') : null;
+  if (from && !to && from.dataset.gid === ui.point && !from.matches(':hover')) pointAt(null);
+});
+document.addEventListener('focusin', (e) => { const t = e.target.closest && e.target.closest('#view [data-gid]'); if (t && t.matches(':focus-within')) pointAt(t.dataset.gid); });
 setInterval(() => updateWall(true), 20000); // the timer and the time of day
 
 function render() {
@@ -1242,7 +1324,7 @@ document.addEventListener('focusout', () => setTimeout(() => { if (pending && !e
 
 function go(view, arg = null) {
   if (ui.view !== view || ui.arg !== arg) { ui.back = { view: ui.view, arg: ui.arg }; ui.f = { source: '', status: '', genre: '' }; }
-  ui.view = view; ui.arg = arg; ui.preview = null;
+  ui.view = view; ui.arg = arg; ui.preview = null; ui.point = null;
   if (view !== 'games' && view !== 'search') ui.sel.clear();
   if (view !== 'search') $('#search').value = '';
   if (view === 'scan' && !ui.scan.stores) scanStores();
@@ -1334,6 +1416,8 @@ const ACT = {
   // details
   draftToggle: (el) => { ui.detail.draft[el.dataset.key] = !ui.detail.draft[el.dataset.key]; render(); },
   setStatus: (el) => call(R.update(el.dataset.id, { status: el.dataset.v })),
+  togglePin: (el) => pinToggle([el.dataset.id]),
+  unpin: (el) => pinToggle([el.dataset.id], false),
   toggleHidden: (el) => { const g = byId(el.dataset.id); call(R.update(g.id, { hidden: !g.hidden }), g.hidden ? `${g.name} is back in your library` : `${g.name} is hidden. Find it under Lists > Hidden.`); },
   dropCol: (el) => { ui.detail.draft.collections = ui.detail.draft.collections.filter((c) => c !== el.dataset.id); render(); },
   browseExe: async () => { const f = await R.pick('exe'); if (f && !f.error) { ui.detail.draft.exe = f; render(); } },
@@ -1520,6 +1604,7 @@ document.addEventListener('change', (e) => {
   if (el.dataset.act === 'addCol' && el.value) { ui.detail.draft.collections.push(el.value); el.blur(); render(); }
   if (el.dataset.act === 'exeChoice') ui.scan.exeChoice[el.dataset.id] = el.value;
   if (el.dataset.act === 'customAccent') call(R.setSettings({ accent: 'custom', accentCustom: el.value }));
+  if (el.dataset.act === 'rackCount') call(R.setSettings({ rackCount: Number(el.value) }));
   if (el.dataset.act === 'wallEvery') { wall.since = 0; setWall({ every: Number(el.value) }); }
   if (el.dataset.act === 'wallRange') setWall({ [el.dataset.key]: Number(el.value) });
   if (el.dataset.act === 'selStatus' && el.value) { call(R.bulk([...ui.sel], { status: el.value === 'none' ? '' : el.value })); el.value = ''; }
@@ -1671,13 +1756,17 @@ function dropTarget() {
   if (rail) {
     const a = rail.dataset.arg || '';
     if (rail.dataset.act === 'newCollection') return { type: 'newcol', el: rail };
-    if (rail.dataset.view === 'home') return S.settings.homeLayout === 'desktop' ? { type: 'desk-add', el: rail } : null;
+    if (rail.dataset.view === 'home') return S.settings.homeLayout === 'desktop' ? { type: 'desk-add', el: rail } : { type: 'rack-add', el: rail };
     if (rail.dataset.col) return { type: 'col', el: rail, col: rail.dataset.col };
     if (a === 'fav') return { type: 'fav', el: rail };
     if (a.startsWith('l:') && (STATUS_DROPS.includes(a.slice(2)) || a === 'l:hidden')) return { type: a === 'l:hidden' ? 'hide' : 'status', el: rail, status: a.slice(2) };
     return null;
   }
   if (st.kind === 'desk' && el.closest('#desk')) return { type: 'desk-move', el: $('#desk') };
+  // onto a cartridge (it lifts under the pointer) or its thumbnail: keep the game in that slot
+  const thumb = el.closest('#view .thumbs [data-slot]');
+  if (thumb) return { type: 'rack', el: thumb, slot: Number(thumb.dataset.slot) };
+  if (el.closest('#rack')) return { type: 'rack', el: $('#rack'), slot: rackSlot };
   if (st.kind === 'game' && st.grid) {
     const t = el.closest('#view .grid .tile[data-gid]');
     if (t && !drag.ids.includes(t.dataset.gid)) { const r = t.getBoundingClientRect(); return { type: 'order', el: t, id: t.dataset.gid, after: drag.x > r.left + r.width / 2 }; }
@@ -1744,6 +1833,8 @@ async function endDrag(drop) {
     else if (t.type === 'hide') await call(R.bulk(ids, { hidden: true }), `Hid ${names()}`);
     else if (t.type === 'newcol') await newCollectionFor(ids);
     else if (t.type === 'desk-add') deskAdd(ids);
+    else if (t.type === 'rack-add') await pinToggle(ids, true);
+    else if (t.type === 'rack') { if (ids.length === 1 && t.slot >= 0) await pinAt(ids[0], t.slot); else await pinToggle(ids, true); }
     else if (t.type === 'order') await reorder(ids, t.id, t.after);
     else if (t.type === 'row') moveRow(st.row, t.row, t.after);
     else if (t.type === 'desk-move') {
@@ -1785,6 +1876,7 @@ R.onGo((v) => go(v));
 R.onMenu(({ action, ids, id }) => {
   if (action === 'open') go('detail', ids[0]);
   if (action === 'deskAdd') deskAdd(ids || []);
+  if (action === 'rackPin') pinToggle(ids || []);
   if (action === 'deskRemove') deskRemove(ids || []);
   if (action === 'rowToggle') ACT.rowToggle({ dataset: { row: id } });
   if (action === 'newCollection') newCollectionFor(ids || []);

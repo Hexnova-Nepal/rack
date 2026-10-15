@@ -27,6 +27,7 @@ The files aren't code-signed yet, so Windows SmartScreen may say "Windows protec
 - **Library backup** to a single `.rackbackup` file.
 - **Themes**: eight ready-made looks (Rack, Nord, Dracula, Gruvbox, Catppuccin, Solarized, Synthwave, Forest), light, dark or system, with your own accent and font if you like.
 - **Wallpaper**: your pictures, your games' artwork, or both, changing on a timer or with the time of day, or following the game you're looking at.
+- **The rack**: 3 to 12 cartridges of your most played games; drag a game onto a cartridge to keep it there.
 - **Drag and drop**: onto collections and lists, into your own order, Home rows you can arrange, and a desktop layout for Home.
 - **Uninstall** through each game's own uninstaller or store, with safety checks before anything is deleted.
 

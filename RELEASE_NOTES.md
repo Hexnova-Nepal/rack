@@ -5,7 +5,7 @@
 **Wallpaper.** A picture behind Rack's screens, dimmed and blurred behind text so everything stays readable.
 - Show your own pictures from a folder, wide artwork of your games (from Steam, or SteamGridDB with a key), or both
 - Change the picture every few minutes, and use different folders for morning, day, evening and night
-- Follow the selected game: on Home and on a game's page, the wallpaper shows that game's art
+- Follow the game you point at: anywhere in Rack, the wallpaper shows the art of the game under the pointer; otherwise Home shows the featured game
 - Dim and blur sliders, and an option to show it on Home only
 
 **Drag and drop.**
@@ -14,6 +14,9 @@
 - Arrange Home: drag rows by their handle, hide them, and add Favourites, Playing, Backlog or any collection as a row. Drop games onto a row to add them to it
 - Desktop layout for Home: place games anywhere over the wallpaper, like icons on a desktop, with Tidy up
 
-**The rack.** Point anywhere on a cartridge, not just its top, to pull it out. Covers sit on the cartridges' labels, and the one in front shows your most played game.
+**The rack.**
+- Point anywhere on a cartridge, not just its top, to pull it out. Covers sit on the cartridges' labels, and the one in front shows your most played game
+- Keep games on the rack: drag a game onto a cartridge and it stays in that slot, whatever you play most. "Always on the rack" is in each game's menu and page too
+- Choose how many cartridges the rack holds, from 3 to 12 (Settings › Home)
 
 **Under the hood.** Rack falls back to PowerShell for starting and timing games if its Windows helper can't load, and says so in Settings. The build is locked down so Rack's files can't be used to run other code.

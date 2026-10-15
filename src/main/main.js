@@ -640,6 +640,9 @@ function gameMenu(ids) {
     const all = games.every((g) => g.collections.includes(c.id));
     return { label: c.name, type: 'checkbox', checked: all, click: () => bulk(ids, all ? { removeCollection: c.id } : { addCollection: c.id }) };
   });
+  const pins = Array.isArray(store.data.settings.rackPins) ? store.data.settings.rackPins : [];
+  const canPin = games.every((g) => !g.hidden && !g.notInstalled);
+  t.push({ label: 'Always on the rack', type: 'checkbox', enabled: canPin, checked: canPin && games.every((g) => pins.includes(g.id)), click: () => sendMenu('rackPin', { ids }) });
   t.push({ label: 'Add to collection', submenu: [...cols, ...(cols.length ? [{ type: 'separator' }] : []), { label: 'New collection…', click: () => sendMenu('newCollection', { ids }) }] });
   if (one) {
     const featured = store.data.settings.featuredId === one.id;
