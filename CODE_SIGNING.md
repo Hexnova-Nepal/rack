@@ -23,7 +23,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 Rack doesn't collect data and doesn't send your library anywhere. It contacts these services only to fetch information about your games, or when you ask it to:
 
-- Steam's store and CDN, for covers, descriptions and genres
+- Steam's store and CDN, for covers, descriptions, genres and the wide art the wallpaper can show
 - SteamGridDB, only if you add a key
 - the Steam Web API, only if you add a key
 - Google Images, only when you open the cover picker

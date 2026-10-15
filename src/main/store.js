@@ -14,11 +14,13 @@ const DEFAULT = {
   found: [],        // new games found in the background, waiting for review
   settings: {
     theme: 'system',            // system | light | dark
-    accent: 'mono',             // mono | amber | lime | teal | sky | violet | rose | custom
+    themeId: 'rack',            // a ready-made theme: rack | nord | dracula | gruvbox | catppuccin | solarized | synthwave | forest
+    chrome: null,               // title bar colours the interface reported, so the window opens in them
+    accent: 'mono',             // theme (the theme's own) | mono | amber | lime | teal | sky | violet | rose | custom
     accentCustom: '#7c9cff',
     darkShade: 'graphite',      // graphite | midnight | black | warm
     lightShade: 'cool',         // cool | paper | white
-    font: 'rack',               // rack | clean | arcade | scifi | classic
+    font: 'rack',               // theme (the theme's own) | rack | clean | arcade | scifi | classic
     coverSize: 'm',             // s | m | l
     view: 'covers',             // covers | list
     sgdbKey: '',
@@ -40,6 +42,22 @@ const DEFAULT = {
     sort: 'lastPlayed',
     setupDone: false,
     trayHintShown: false,
+    // the picture behind the app's screens
+    wallpaper: {
+      source: 'off',            // off | pictures | art | both
+      folder: '',               // your pictures
+      every: 15,                // minutes between pictures; 0 keeps one
+      byTime: false,            // different pictures for each part of the day
+      times: { morning: '', day: '', evening: '', night: '' },
+      follow: true,             // on Home and a game's page, show that game's artwork
+      dim: 60,                  // 0-90 %
+      blur: 8,                  // 0-30 px
+      where: 'all',             // all | home
+    },
+    order: [],                  // "Your order" of games, by id
+    homeLayout: 'shelves',      // shelves | desktop
+    homeRows: null,             // [{ id, on }]; null is the default set
+    desktop: null,              // games placed on the Home desktop: [{ id, c, r }] grid cells; null until you place one
   },
 };
 
@@ -50,7 +68,9 @@ class Store {
     this.dir = dir;
     this.file = path.join(dir, 'library.json');
     this.coverDir = path.join(dir, 'covers');
+    this.heroDir = path.join(dir, 'heroes'); // wide game art for the wallpaper
     fs.mkdirSync(this.coverDir, { recursive: true });
+    fs.mkdirSync(this.heroDir, { recursive: true });
     this.data = this.load();
     this.timer = null;
   }
@@ -60,7 +80,15 @@ class Store {
     for (const f of [this.file, this.file + '.bak']) {
       try {
         const d = JSON.parse(fs.readFileSync(f, 'utf8'));
-        const out = { ...fresh, ...d, settings: { ...fresh.settings, ...(d.settings || {}), sources: { ...fresh.settings.sources, ...((d.settings || {}).sources || {}) } } };
+        const ds = d.settings || {}, dw = ds.wallpaper || {};
+        const out = {
+          ...fresh, ...d,
+          settings: {
+            ...fresh.settings, ...ds,
+            sources: { ...fresh.settings.sources, ...(ds.sources || {}) },
+            wallpaper: { ...fresh.settings.wallpaper, ...dw, times: { ...fresh.settings.wallpaper.times, ...(dw.times || {}) } },
+          },
+        };
         // an existing library has been set up already
         if (d.settings && d.settings.setupDone === undefined && ((d.games || []).length || (d.folders || []).length || (d.romFolders || []).length)) out.settings.setupDone = true;
         for (const g of out.games) {

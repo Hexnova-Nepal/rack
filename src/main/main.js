@@ -13,6 +13,8 @@ const uninstaller = require('./uninstall');
 const picker = require('./picker');
 const winapi = require('./winapi');
 const backups = require('./backups');
+const { Pictures, SLOTS } = require('./wallpaper');
+const pictures = new Pictures();
 const { Updates } = require('./updates');
 
 const APP_ID = 'app.rack.launcher';
@@ -77,6 +79,46 @@ const changed = () => {
   clearTimeout(jumpTimer); jumpTimer = setTimeout(updateJumpList, 1500);
   if (tracker) tracker.refreshFolders();
 };
+/* ---------- wide game art for the wallpaper ---------- */
+
+const heroQueue = [];
+let heroBusy = false;
+/** Fetches wide art for these games, one at a time, in the background. A miss is retried after a day. */
+function wantHeroes(ids) {
+  const now = Date.now();
+  for (const id of ids || []) {
+    const g = store.game(id);
+    if (!g || g.hero || g.notInstalled || heroQueue.includes(id)) continue;
+    if (g.heroTried && now - g.heroTried < 24 * 3600 * 1000) continue;
+    heroQueue.push(id);
+  }
+  runHeroes();
+}
+async function runHeroes() {
+  if (heroBusy) return;
+  heroBusy = true;
+  try {
+    while (heroQueue.length) {
+      const g = store.game(heroQueue.shift());
+      if (!g || g.hero) continue;
+      g.heroTried = Date.now();
+      try {
+        const f = await covers.hero(g, { key: store.data.settings.sgdbKey, steamRoot: steamRootPath, steamCachedHero: scan.steamCachedHero });
+        if (f && store.game(g.id)) { g.hero = f; push(); }
+      } catch { /* a bad key or no connection: the wallpaper uses the cover instead */ }
+      await new Promise((r) => setTimeout(r, 350));
+    }
+  } finally { heroBusy = false; store.save(); }
+}
+/** When the wallpaper shows game art, fetch it for the games you play most and most recently. */
+function fillHeroes() {
+  const w = store.data.settings.wallpaper || {};
+  if (w.source !== 'art' && w.source !== 'both' && !(w.follow && w.source !== 'off')) return;
+  const games = store.data.games.filter((g) => !g.hidden && !g.notInstalled && !g.missing);
+  games.sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || (b.playtime || 0) - (a.playtime || 0));
+  wantHeroes(games.slice(0, 60).map((g) => g.id));
+}
+
 function toast(text, kind = '') {
   if (win && !win.isDestroyed()) win.webContents.send('toast', { text, kind });
   else notify(text);
@@ -170,6 +212,7 @@ function removeGame(id, { ignore = true } = {}) {
   if (!g) return;
   if (ignore) store.ignore(g);
   covers.remove(g.cover);
+  covers.remove(g.hero, store.heroDir);
   store.data.games = store.data.games.filter((x) => x.id !== id);
   if (store.data.settings.featuredId === id) store.data.settings.featuredId = null;
   changed();
@@ -513,13 +556,19 @@ function ensureTray() {
 
 /* ---------- theme and window ---------- */
 
+const HEX = /^#[0-9a-f]{6}$/i;
 function overlay() {
-  const s = store.data.settings, dark = nativeTheme.shouldUseDarkColors;
+  const s = store.data.settings, dark = nativeTheme.shouldUseDarkColors, c = s.chrome;
+  // the interface reports its title bar colours (themes); before it has, use the shade's
+  if (c && HEX.test(c.color) && HEX.test(c.symbolColor)) return { color: c.color, symbolColor: c.symbolColor, height: 36 };
   const [color, symbolColor] = dark ? SHADES.dark[s.darkShade] || SHADES.dark.graphite : SHADES.light[s.lightShade] || SHADES.light.cool;
   return { color, symbolColor, height: 36 };
 }
 function applyTheme() {
-  nativeTheme.themeSource = store.data.settings.theme || 'system';
+  const s = store.data.settings;
+  // a dark-only theme keeps Windows' own parts (menus, scroll bars, dialogs) dark too
+  const want = s.chrome && s.chrome.forceDark ? 'dark' : s.theme || 'system';
+  if (nativeTheme.themeSource !== want) nativeTheme.themeSource = want;
   if (win && !win.isDestroyed() && process.platform === 'win32') { try { win.setTitleBarOverlay(overlay()); } catch { /* older Windows */ } }
 }
 
@@ -606,6 +655,12 @@ function gameMenu(ids) {
   const allHidden = games.every((g) => g.hidden);
   t.push({ label: allHidden ? 'Show again' : 'Hide', click: () => bulk(ids, { hidden: !allHidden }) });
   if (one && !one.notInstalled) t.push({ label: 'Uninstall…', enabled: !one.missing, click: () => sendMenu('uninstall', { ids }) });
+  // the Home desktop: put games on it or take them off
+  if (store.data.settings.homeLayout === 'desktop') {
+    const desk = Array.isArray(store.data.settings.desktop) ? store.data.settings.desktop : [];
+    const all = games.every((g) => desk.some((x) => x && x.id === g.id));
+    t.push({ label: all ? 'Remove from Home' : 'Put on Home', click: () => sendMenu(all ? 'deskRemove' : 'deskAdd', { ids }) });
+  }
   t.push({ label: one ? 'Remove from library…' : `Remove ${games.length} games from library…`, click: () => sendMenu('remove', { ids }) });
   Menu.buildFromTemplate(t).popup({ window: win });
 }
@@ -805,10 +860,21 @@ function registerIpc() {
     for (const g of store.data.games) g.collections = (g.collections || []).filter((c) => c !== id);
     changed(); return { ok: true };
   });
+  handle('collection:order', (id, ids) => {
+    const c = store.data.collections.find((x) => x.id === id);
+    if (!c || !Array.isArray(ids)) return { ok: false };
+    c.order = ids.filter((x) => typeof x === 'string').slice(0, 20000);
+    changed();
+    return { ok: true };
+  });
   handle('collection:menu', (id) => {
     const c = store.data.collections.find((x) => x.id === id);
     if (!c || !win) return { ok: false };
+    const rows = Array.isArray(store.data.settings.homeRows) ? store.data.settings.homeRows : [];
+    const onHome = rows.some((r) => r && r.id === 'col:' + id && r.on);
     Menu.buildFromTemplate([
+      { label: 'Show on Home', type: 'checkbox', checked: onHome, click: () => sendMenu('rowToggle', { id: 'col:' + id }) },
+      { type: 'separator' },
       { label: 'Rename', click: () => sendMenu('renameCollection', { id }) },
       { label: 'Delete collection', click: () => sendMenu('deleteCollection', { id }) },
     ]).popup({ window: win });
@@ -829,10 +895,37 @@ function registerIpc() {
       try { const n = await refreshOwned({ quiet: !patch.steamApiKey && !patch.showNotInstalled }); if (n) toast(`Added ${n} Steam games you own but haven’t installed`); } catch (e) { toast(e.message, 'warn'); }
     }
     if ('autoFind' in patch && patch.autoFind) findNew();
+    if ('wallpaper' in patch) fillHeroes();
     changed();
     return { ok: true };
   });
   handle('steam:owned', async () => ({ ok: true, added: await refreshOwned({ quiet: false }) }));
+  /* wallpaper */
+  handle('wall:list', () => pictures.list(store.data.settings.wallpaper));
+  handle('wall:pick', async (slot) => {
+    if (slot !== 'main' && !SLOTS.includes(slot)) return { ok: false };
+    const dir = await pick('folder', { title: slot === 'main' ? 'Choose a folder of pictures' : `Choose pictures for the ${slot}` });
+    if (!dir) return { ok: false };
+    const w = store.data.settings.wallpaper;
+    if (slot === 'main') { w.folder = dir; if (w.source === 'off') w.source = 'pictures'; else if (w.source === 'art') w.source = 'both'; } else w.times[slot] = dir;
+    changed();
+    return { ok: true, path: dir };
+  });
+  handle('wall:clear', (slot) => {
+    const w = store.data.settings.wallpaper;
+    if (slot === 'main') w.folder = ''; else if (SLOTS.includes(slot)) w.times[slot] = '';
+    changed();
+    return { ok: true };
+  });
+  handle('art:want', (ids) => { wantHeroes(Array.isArray(ids) ? ids.slice(0, 80) : []); return { ok: true }; });
+
+  handle('appearance:chrome', (c) => {
+    if (!c || !HEX.test(c.color) || !HEX.test(c.symbolColor)) return { ok: false };
+    store.data.settings.chrome = { color: c.color, symbolColor: c.symbolColor, forceDark: !!c.forceDark };
+    store.save();
+    applyTheme();
+    return { ok: true };
+  });
 
   /* scanning */
   handle('scan:stores', async () => storeSummary(await scanAllStores()));
@@ -984,7 +1077,7 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   store = new Store(app.getPath('userData'));
   covers = new Covers({
-    fetch: (u, o) => net.fetch(u, o), coverDir: store.coverDir,
+    fetch: (u, o) => net.fetch(u, o), coverDir: store.coverDir, heroDir: store.heroDir,
     imageSize: (buf) => { try { const i = nativeImage.createFromBuffer(buf); return i.isEmpty() ? null : i.getSize(); } catch { return null; } },
   });
   ludusavi = new backups.Ludusavi({ toolsDir: path.join(app.getPath('userData'), 'tools'), fetch: (u, o) => net.fetch(u, o), getPath: () => store.data.settings.ludusaviPath });
@@ -997,11 +1090,17 @@ app.whenReady().then(async () => {
   });
   updates = new Updates({ app, portable: PORTABLE, fetch: (u, o) => net.fetch(u, o), onChange: () => push() });
 
+  // rack://cover/<file> and rack://hero/<file> serve Rack's own pictures; rack://wall/<id> serves
+  // only pictures Rack listed from your wallpaper folders
   protocol.handle('rack', (req) => {
     const u = new URL(req.url);
-    if (u.host !== 'cover') return new Response('', { status: 404 });
-    const file = path.join(store.coverDir, path.basename(decodeURIComponent(u.pathname)));
-    return net.fetch(pathToFileURL(file).toString());
+    const name = path.basename(decodeURIComponent(u.pathname));
+    if (u.host === 'cover' || u.host === 'hero') return net.fetch(pathToFileURL(path.join(u.host === 'cover' ? store.coverDir : store.heroDir, name)).toString());
+    if (u.host === 'wall') {
+      const f = pictures.file(name);
+      return f ? net.fetch(pathToFileURL(f).toString()) : new Response('', { status: 404 });
+    }
+    return new Response('', { status: 404 });
   });
 
   applyTheme();
@@ -1018,6 +1117,7 @@ app.whenReady().then(async () => {
   steamRootPath = await scan.steamRoot().catch(() => null);
   watchStores();
   refreshSteamHours().then(fillMissingArt);
+  setTimeout(fillHeroes, 8000);
   if (store.data.settings.steamApiKey && Date.now() - (store.data.settings.ownedAt || 0) > 12 * 3600 * 1000) refreshOwned().catch(() => {});
   setTimeout(() => { if (store.data.settings.setupDone) findNew(); }, 15000);
   setInterval(() => findNew(), 30 * 60000);

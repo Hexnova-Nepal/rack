@@ -24,3 +24,6 @@ Third-party parts keep their own licences: the Hairline engine (MIT,
 src/renderer/vendor/HAIRLINE-LICENSE.txt), the fonts (SIL Open Font License,
 src/renderer/fonts/OFL-*.txt), Electron, koffi, fflate and electron-updater
 (MIT). Ludusavi (MIT) is downloaded by the user on request, not bundled.
+The Nord, Dracula, Gruvbox, Catppuccin and Solarized themes use the colour
+palettes of those open-source projects (each MIT), credited in
+src/renderer/themes.js.

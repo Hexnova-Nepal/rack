@@ -1,9 +1,12 @@
 // Rack's interface. All data lives in the main process; this file draws it and sends requests back.
+import { THEMES, themeById } from './themes.js';
+
 const R = window.rack;
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const I = {
+  grip: '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke-width="2.6"/>',
   home: '<path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/>',
   grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
   list: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
@@ -22,6 +25,7 @@ const I = {
   img: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M5 18l5-5 4 4 2-2 4 3"/>',
   back: '<path d="M14 6l-6 6 6 6"/>',
   down: '<path d="M7 10l5 5 5-5"/>',
+  up: '<path d="M7 14l5-5 5 5"/>',
   redo: '<path d="M19 12a7 7 0 1 1-2-4.9M19 4v4h-4"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7L11.5 6.8M14 10a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 0 0 5.7 5.7l1.3-1.3"/>',
   save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
@@ -68,7 +72,17 @@ const ui = {
 /* ---------- appearance ---------- */
 
 const ACCENTS = { mono: null, amber: '#f2b544', lime: '#a3e635', teal: '#2dd4bf', sky: '#38bdf8', violet: '#a78bfa', rose: '#fb7185' };
-const ACCENT_NAMES = { mono: 'Mono', amber: 'Amber', lime: 'Lime', teal: 'Teal', sky: 'Sky', violet: 'Violet', rose: 'Rose', custom: 'Your colour' };
+const ACCENT_NAMES = { theme: 'The theme’s own', mono: 'Mono', amber: 'Amber', lime: 'Lime', teal: 'Teal', sky: 'Sky', violet: 'Violet', rose: 'Rose', custom: 'Your colour' };
+// Rack's own palettes, for the theme card's little preview (the full set is in styles.css)
+const RACK_PREVIEW = {
+  graphite: { bg: '#1b1f27', rail: '#20252f', raise: '#2a303c', line: '#353c4a', ink: '#eef0f4', faint: '#828a9b' },
+  midnight: { bg: '#0f1422', rail: '#141a2b', raise: '#1c2438', line: '#2b3550', ink: '#eef1f8', faint: '#7d87a3' },
+  black: { bg: '#09090b', rail: '#0f0f12', raise: '#18181b', line: '#2a2a2f', ink: '#f2f2f3', faint: '#7c7c85' },
+  warm: { bg: '#1d1a18', rail: '#25211e', raise: '#2f2a26', line: '#423a34', ink: '#f4efe9', faint: '#8b8178' },
+  cool: { bg: '#eef0f3', rail: '#e6e9ee', raise: '#ffffff', line: '#d3d8e0', ink: '#1b1f27', faint: '#636b7c' },
+  paper: { bg: '#f3efe7', rail: '#ebe6dc', raise: '#fffdf8', line: '#dcd4c6', ink: '#24201b', faint: '#6c6256' },
+  white: { bg: '#f8f9fa', rail: '#f1f2f4', raise: '#ffffff', line: '#dfe2e7', ink: '#16181d', faint: '#626876' },
+};
 const DARK_SHADES = [['graphite', 'Graphite', '#1b1f27'], ['midnight', 'Midnight', '#0f1422'], ['black', 'Black', '#09090b'], ['warm', 'Warm', '#1d1a18']];
 const LIGHT_SHADES = [['cool', 'Cool', '#eef0f3'], ['paper', 'Paper', '#f3efe7'], ['white', 'White', '#f8f9fa']];
 const FONTS = [['rack', 'Rack', 'Wide titles, crisp text'], ['clean', 'Clean', 'One modern face'], ['arcade', 'Arcade', 'Squared, techy titles'], ['scifi', 'Sci-fi', 'Slanted, futuristic'], ['classic', 'Classic', 'The 1.0 look']];
@@ -84,14 +98,39 @@ function tune(c, bg, target, dark) {
   return x;
 }
 
+const TOKENS = ['bg', 'rail', 'raise', 'hover', 'line', 'ink', 'soft', 'faint'];
+const darkOnly = (t) => t.id !== 'rack' && !t.light;
+/** Which variant shows: a dark-only theme is always dark; otherwise the Light / Dark / System setting. */
+function themeMode(t, s) {
+  if (darkOnly(t)) return 'dark';
+  if (s.theme === 'light' || s.theme === 'dark') return s.theme;
+  return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+const fontOf = (s, t) => (!s.font || s.font === 'theme' ? t.font : s.font);
+let lastChrome = '';
+
 function applyAppearance() {
   if (!S) return;
   const s = S.settings, root = document.documentElement;
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-  root.dataset.palette = dark ? `dark-${s.darkShade || 'graphite'}` : `light-${s.lightShade || 'cool'}`;
-  root.dataset.font = s.font || 'rack';
+  const t = themeById(s.themeId), mode = themeMode(t, s), dark = mode === 'dark';
+  for (const k of [...TOKENS, 'signal', 'signal-line', 'glow']) root.style.removeProperty('--' + k);
+  root.style.removeProperty('color-scheme');
+  if (t.id === 'rack') root.dataset.palette = dark ? `dark-${s.darkShade || 'graphite'}` : `light-${s.lightShade || 'cool'}`;
+  else {
+    const p = t[mode];
+    root.dataset.palette = `${mode}-${t.id}`;
+    for (const k of TOKENS) root.style.setProperty('--' + k, p[k]);
+    const sg = hex(p.signal);
+    root.style.setProperty('--signal', p.signal);
+    root.style.setProperty('--signal-line', `rgba(${sg.join(',')},.45)`);
+    if (p.glow) root.style.setProperty('--glow', p.glow);
+    root.style.setProperty('color-scheme', mode);
+  }
+  root.dataset.theme = t.id;
+  root.dataset.font = fontOf(s, t);
   root.dataset.size = s.coverSize || 'm';
-  const base = s.accent === 'custom' ? hex(s.accentCustom) : hex(ACCENTS[s.accent] || '');
+  const key = s.accent || 'theme';
+  const base = key === 'custom' ? hex(s.accentCustom) : key === 'theme' ? (t.id === 'rack' ? null : hex(t[mode].accent)) : hex(ACCENTS[key] || '');
   for (const k of ['--accent', '--accent-ink', '--accent-text', '--accent-soft']) root.style.removeProperty(k);
   if (base) {
     const bg = hex(getComputedStyle(root).getPropertyValue('--bg')) || (dark ? [27, 31, 39] : [238, 240, 243]);
@@ -102,6 +141,12 @@ function applyAppearance() {
     root.style.setProperty('--accent-text', toHex(t));
     root.style.setProperty('--accent-soft', `rgba(${a.map(Math.round).join(',')},${dark ? 0.16 : 0.13})`);
   }
+  // the title bar's window buttons are drawn by Windows: tell the main process their colours,
+  // and that a dark-only theme wants Windows' own parts (menus, scrollbars) dark as well
+  const cs = getComputedStyle(root);
+  const chrome = { color: cs.getPropertyValue('--rail').trim(), symbolColor: cs.getPropertyValue('--soft').trim(), forceDark: darkOnly(t) };
+  const sig = JSON.stringify(chrome);
+  if (sig !== lastChrome && R.setChrome) { lastChrome = sig; R.setChrome(chrome); }
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyAppearance());
 
@@ -174,6 +219,39 @@ const SORTS = {
 };
 const sortGames = (list, how) => [...list].sort(SORTS[how] || SORTS.name);
 
+/* "Your order": a stored list of ids, one for the whole library and one per collection */
+const storedOrder = (col) => (col ? col.order : S.settings.order) || [];
+function customSorted(list, col) {
+  const at = new Map(storedOrder(col).map((id, i) => [id, i]));
+  const pos = (g) => (at.has(g.id) ? at.get(g.id) : Infinity);
+  return [...list].sort((a, b) => pos(a) - pos(b) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+/** Puts `shown` (ids in the order you see them) into `order`, in the places those ids already hold. */
+function refill(order, shown) {
+  const set = new Set(shown), q = [...shown];
+  return order.map((id) => (set.has(id) ? q.shift() : id));
+}
+/** Moves ids (keeping their own order) to just before or after the target. */
+function moveIds(order, ids, target, after) {
+  const set = new Set(ids);
+  const rest = order.filter((id) => !set.has(id)), moving = order.filter((id) => set.has(id));
+  let at = rest.indexOf(target);
+  if (at < 0) at = rest.length; else if (after) at++;
+  rest.splice(at, 0, ...moving);
+  return rest;
+}
+/** Drag (or Alt + arrow) a game to a new place: the list switches to your order, starting from what you see. */
+async function reorder(ids, target, after) {
+  const b = baseList(), col = b && b.col ? b.col : null;
+  const pool = col ? S.games.filter((g) => (g.collections || []).includes(col.id)) : S.games;
+  let order = customSorted(pool, col).map((g) => g.id);
+  const sort = ui.sort || S.settings.sort || 'lastPlayed';
+  if (sort !== 'custom') order = refill(order, visibleIds().filter((id) => order.includes(id)));
+  const next = moveIds(order, ids.filter((id) => order.includes(id)), target, after);
+  await call(col ? R.collectionOrder(col.id, next) : R.setSettings({ order: next }));
+  if (sort !== 'custom') { ui.sort = 'custom'; await call(R.setSettings({ sort: 'custom' })); toast('Now sorted by your order. Drag games, or press Alt and an arrow key, to arrange them.'); }
+}
+
 function toast(text, kind = '') {
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
@@ -224,7 +302,7 @@ function renderRail() {
   const nav = (view, arg, icon, label, n, on, extra = '') => `<button class="${on ? 'on' : ''}" data-act="go" data-view="${view}" data-arg="${esc(arg ?? '')}" ${extra}>${ic(icon)}<span>${esc(label)}</span>${n != null ? `<b class="num">${n}</b>` : ''}</button>`;
   const at = (v, a) => ui.view === v && (a == null || ui.arg === a);
   const sources = Object.keys(SRC).filter((s) => count((g) => visible(g) && g.source === s));
-  const lists = LISTS.map(([k, label, icon, f]) => [k, label, icon, count((g) => (k === 'hidden' ? g.hidden : k === 'notinstalled' ? g.notInstalled && !g.hidden : visible(g)) && f(g))]).filter((l) => l[3] > 0);
+  const lists = LISTS.map(([k, label, icon, f]) => [k, label, icon, count((g) => (k === 'hidden' ? g.hidden : k === 'notinstalled' ? g.notInstalled && !g.hidden : visible(g)) && f(g))]).filter((l) => l[3] > 0 || (drag.active && STATUS_DROPS.includes(l[0])));
   const found = (S.found || []).length;
   $('#rail').innerHTML = `
     <div class="nav">${nav('home', null, 'home', 'Home', null, at('home'))}${nav('games', 'all', 'grid', 'All games', count(visible), at('games', 'all'))}${nav('games', 'fav', 'star', 'Favourites', count((g) => visible(g) && g.favourite), at('games', 'fav'))}
@@ -291,6 +369,7 @@ function rackStage(rest) {
       const g = rackSlot >= 0 ? rackList[rackSlot] : null;
       ui.preview = g ? g.id : null;
       renderHeroInfo();
+      updateWall();
       document.querySelectorAll('.thumbs button').forEach((b, i) => b.classList.toggle('on', i === rackSlot));
     },
   };
@@ -356,9 +435,7 @@ function renderHome() {
         <div class="actions"><button class="btn solid big" data-act="go" data-view="scan">${ic('scan')}Scan for games</button><button class="btn big" data-act="addManual">Add one game</button></div></div>
       <div class="rackwrap"><div id="rackslot" data-rest="2"></div></div></section>`;
   }
-  const jb = jumpBackIn().slice(0, 12), mp = mostPlayed().slice(0, 12), ra = recentAdded().slice(0, 11);
-  const max = mp.length ? mp[0].total : 1;
-  const lastSession = (g) => { const s = (g.sessions || []).slice(-1)[0]; return s && s.minutes ? `${hours(s.minutes)}, ${ago(g.lastPlayed, true).toLowerCase()}` : ago(g.lastPlayed, true); };
+  if (S.settings.homeLayout === 'desktop') return banner + renderDesktop();
   return `${banner}
   <section class="hero">
     <div id="hero-cover"></div>
@@ -367,16 +444,118 @@ function renderHome() {
       <div class="thumbs">${rackList.map((g, i) => `<button data-act="feature" data-id="${g.id}" data-gid="${g.id}" data-slot="${i}" title="${esc(g.name)}" aria-label="Feature ${esc(g.name)}">${coverHTML(g, { src: false, state: false })}</button>`).join('')}</div>
       <div class="rackcap"><span>Your most played. Point at one to preview it, click to feature it.</span><strong id="rack-name"></strong></div></div>
   </section>
-  ${jb.length ? `<section class="shelf"><header><h2 class="title">Jump back in</h2><span>Played in the last 30 days</span><button class="link" data-act="go" data-view="games" data-arg="l:month">See all</button></header>
-    <div class="row">${jb.map((g) => tile(g, `<small>${esc(lastSession(g))}</small>`)).join('')}</div></section>` : ''}
-  <section class="shelf"><header><h2 class="title">Most played</h2><span>${S.settings.importSteamPlaytime ? 'Timed by Rack, plus hours from Steam' : 'Timed by Rack'}</span>${mp.length ? '<button class="link" data-act="go" data-view="games" data-arg="all" data-sort="total">See all</button>' : ''}</header>
-    ${mp.length ? `<div class="row">${mp.map((g) => tile(g, `<div class="hours"><i style="width:${Math.max(3, Math.round((g.total / max) * 100))}%"></i></div><small class="num">${hours(g.total)}</small>`)).join('')}</div>`
-      : '<p class="muted" style="margin:0 0 18px">Play something and it will show up here. Rack times games even when you start them from Steam or a shortcut.</p>'}
-  </section>
-  <section class="shelf"><header><h2 class="title">Recently added</h2><span>${S.games.filter(visible).length} in your library</span><button class="link" data-act="go" data-view="games" data-arg="all" data-sort="added">See all</button></header>
-    <div class="row">${ra.map((g) => tile(g, `<small>${esc(ago(g.added, true))}</small>`)).join('')}
-      <button class="tile addtile hit" data-act="go" data-view="scan"><div class="cover">${ic('plus')}Scan a folder or add a game</div></button></div>
-  </section><div style="height:24px"></div>`;
+  ${homeRows().filter((r) => r.on).map(shelfHTML).join('')}<div style="height:24px"></div>`;
+}
+
+/* ---------- Home rows: reorder by their handle, hide, add Favourites, a status or a collection ---------- */
+
+const ROW_DEFS = {
+  jump: 'Jump back in', most: 'Most played', recent: 'Recently added', fav: 'Favourites', playing: 'Playing', backlog: 'Backlog',
+};
+const DEFAULT_ROWS = [{ id: 'jump', on: true }, { id: 'most', on: true }, { id: 'recent', on: true }, { id: 'fav', on: false }, { id: 'playing', on: false }, { id: 'backlog', on: false }];
+const rowName = (id) => ROW_DEFS[id] || ((S.collections.find((c) => 'col:' + c.id === id) || {}).name) || '';
+/** The Home rows in your order: the defaults, then any collection, each on or off. */
+function homeRows() {
+  const saved = Array.isArray(S.settings.homeRows) ? S.settings.homeRows : DEFAULT_ROWS;
+  const ok = (id) => ROW_DEFS[id] || (id.startsWith('col:') && S.collections.some((c) => 'col:' + c.id === id));
+  const out = saved.filter((r) => r && ok(r.id)).map((r) => ({ id: r.id, on: !!r.on }));
+  for (const r of DEFAULT_ROWS) if (!out.some((x) => x.id === r.id)) out.push({ id: r.id, on: false });
+  for (const c of S.collections) if (!out.some((x) => x.id === 'col:' + c.id)) out.push({ id: 'col:' + c.id, on: false });
+  return out;
+}
+const saveRows = (rows) => call(R.setSettings({ homeRows: rows.map((r) => ({ id: r.id, on: !!r.on })) }));
+/** What a row drops onto: dropping games on a row adds them to its list. */
+const rowDrop = (id) => (id === 'fav' ? 'fav' : id === 'playing' || id === 'backlog' ? `l:${id}` : id.startsWith('col:') ? `c:${id.slice(4)}` : '');
+
+function shelfHTML(row) {
+  const id = row.id, name = rowName(id);
+  const lastSession = (g) => { const x = (g.sessions || []).slice(-1)[0]; return x && x.minutes ? `${hours(x.minutes)}, ${ago(g.lastPlayed, true).toLowerCase()}` : ago(g.lastPlayed, true); };
+  let list = [], sub = '', more = '', body = '';
+  if (id === 'jump') { list = jumpBackIn().slice(0, 12); sub = 'Played in the last 30 days'; more = 'data-arg="l:month"'; if (!list.length) return ''; body = list.map((g) => tile(g, `<small>${esc(lastSession(g))}</small>`)).join(''); }
+  else if (id === 'most') {
+    list = mostPlayed().slice(0, 12); sub = S.settings.importSteamPlaytime ? 'Timed by Rack, plus hours from Steam' : 'Timed by Rack'; more = list.length ? 'data-arg="all" data-sort="total"' : '';
+    const max = list.length ? list[0].total : 1;
+    body = list.map((g) => tile(g, `<div class="hours"><i style="width:${Math.max(3, Math.round((g.total / max) * 100))}%"></i></div><small class="num">${hours(g.total)}</small>`)).join('');
+    if (!list.length) body = '<p class="muted rowempty">Play something and it will show up here. Rack times games even when you start them from Steam or a shortcut.</p>';
+  } else if (id === 'recent') {
+    list = recentAdded().slice(0, 11); sub = `${S.games.filter(visible).length} in your library`; more = 'data-arg="all" data-sort="added"';
+    body = list.map((g) => tile(g, `<small>${esc(ago(g.added, true))}</small>`)).join('') + `<button class="tile addtile hit" data-act="go" data-view="scan"><div class="cover">${ic('plus')}Scan a folder or add a game</div></button>`;
+  } else {
+    const col = id.startsWith('col:') ? S.collections.find((c) => 'col:' + c.id === id) : null;
+    const pool = id === 'fav' ? S.games.filter((g) => visible(g) && g.favourite) : col ? customSorted(S.games.filter((g) => visible(g) && (g.collections || []).includes(col.id)), col)
+      : S.games.filter((g) => visible(g) && g.status === id);
+    list = pool.slice(0, 14);
+    sub = `${pool.length} ${pool.length === 1 ? 'game' : 'games'}`;
+    more = list.length ? `data-arg="${id === 'fav' ? 'fav' : col ? 'c:' + col.id : 'l:' + id}"` : '';
+    body = list.length ? list.map((g) => tile(g, `<small>${esc(g.lastPlayed ? ago(g.lastPlayed, true) : sourceLabel(g))}</small>`)).join('') : '<p class="muted rowempty">Nothing here yet. Drag games onto this row to add them.</p>';
+  }
+  const drop = rowDrop(id);
+  return `<section class="shelf" data-row="${esc(id)}"${drop ? ` data-drop="${esc(drop)}"` : ''}><header>
+      <button class="grip" data-row="${esc(id)}" title="Drag to move this row" aria-label="Move the ${esc(name)} row">${ic('grip')}</button>
+      <h2 class="title">${esc(name)}</h2><span>${esc(sub)}</span>${more ? `<button class="link" data-act="go" data-view="games" ${more}>See all</button>` : '<span class="spacer"></span>'}
+      <button class="rowx" data-act="hideRow" data-row="${esc(id)}" title="Hide this row" aria-label="Hide the ${esc(name)} row">${ic('x')}</button></header>
+    <div class="row">${body}</div></section>`;
+}
+
+/* ---------- the desktop: games placed anywhere on Home ---------- */
+
+const CELL_W = 132, CELL_H = 214, DESK_PAD = 24;
+const deskCols = () => Math.max(1, Math.floor((($('#view') || document.body).clientWidth - DESK_PAD * 2) / CELL_W));
+const deskRows = () => Math.max(2, Math.floor((($('#view') || document.body).clientHeight - 150) / CELL_H));
+/** Where each game on the desktop sits, as grid cells; overlaps and cells off a narrow window move to the nearest free one. */
+function deskItems() {
+  let saved = S.settings.desktop;
+  if (!Array.isArray(saved)) {
+    // first time: favourites, then most played, down the left like icons on a desktop
+    const pick = [...S.games.filter((g) => visible(g) && g.favourite), ...mostPlayed()].filter((g, i, a) => a.indexOf(g) === i).slice(0, 12);
+    const rows = deskRows();
+    saved = pick.map((g, i) => ({ id: g.id, c: Math.floor(i / rows), r: i % rows }));
+  }
+  const cols = deskCols(), taken = new Set(), out = [];
+  const free = (c, r) => c >= 0 && r >= 0 && c < cols && !taken.has(`${c},${r}`);
+  const nearest = (c, r) => {
+    for (let d = 0; d < 400; d++) for (let dc = -d; dc <= d; dc++) for (const dr of [-(d - Math.abs(dc)), d - Math.abs(dc)]) if (free(c + dc, r + dr)) return [c + dc, r + dr];
+    return [0, out.length];
+  };
+  for (const x of saved) {
+    const g = byId(x.id);
+    if (!g || !visible(g)) continue;
+    let c = Math.max(0, Math.round(Number(x.c) || 0)), r = Math.max(0, Math.round(Number(x.r) || 0));
+    if (!free(c, r)) [c, r] = nearest(Math.min(c, cols - 1), r);
+    taken.add(`${c},${r}`);
+    out.push({ g, c, r });
+  }
+  return out;
+}
+const saveDesk = (items) => call(R.setSettings({ desktop: items.map((x) => ({ id: x.g ? x.g.id : x.id, c: x.c, r: x.r })) }));
+function deskAdd(ids) {
+  const items = deskItems(), have = new Set(items.map((x) => x.g.id)), rows = deskRows(), cols = deskCols();
+  const taken = new Set(items.map((x) => `${x.c},${x.r}`));
+  let added = 0, last = '';
+  for (const id of ids) {
+    if (have.has(id) || !byId(id)) continue;
+    last = byId(id).name;
+    let i = 0;
+    while (taken.has(`${Math.floor(i / rows)},${i % rows}`) && i < cols * rows * 4) i++;
+    const c = Math.floor(i / rows), r = i % rows;
+    taken.add(`${c},${r}`); items.push({ g: byId(id), c, r }); added++;
+  }
+  if (added) { saveDesk(items); toast(`Put ${added === 1 ? last : added + ' games'} on Home`); }
+}
+const deskRemove = (ids) => saveDesk(deskItems().filter((x) => !ids.includes(x.g.id)));
+function deskTidy() {
+  const rows = deskRows();
+  const items = deskItems().sort((a, b) => a.c - b.c || a.r - b.r).map((x, i) => ({ ...x, c: Math.floor(i / rows), r: i % rows }));
+  saveDesk(items);
+}
+function renderDesktop() {
+  const items = deskItems();
+  return `<div class="deskbar"><h1 class="title">Home</h1><span class="muted">Drag games anywhere. Drop games on Home in the sidebar, or right-click them, to add more.</span><span class="spacer"></span>
+    <button class="btn small" data-act="deskTidy">${ic('grid')}Tidy up</button><button class="btn small ghost" data-act="homeLayout" data-v="shelves">Back to shelves</button></div>
+    <div id="desk" class="desk" style="--cell-w:${CELL_W}px;--cell-h:${CELL_H}px;--desk-pad:${DESK_PAD}px;min-height:${(Math.max(deskRows(), ...items.map((x) => x.r + 1)) * CELL_H) + 20}px">
+      ${items.map(({ g, c, r }) => `<div class="dtile" data-gid="${g.id}" style="--c:${c};--r:${r}"><button class="hit" data-act="open" data-id="${g.id}" data-fk="d:${g.id}" aria-label="${esc(g.name)}">${coverHTML(g, { src: false })}</button><p title="${esc(g.name)}">${esc(g.name)}</p></div>`).join('')}
+      ${items.length ? '' : '<p class="muted deskempty">Your desktop is empty. Drag games from any list onto Home in the sidebar.</p>'}
+    </div>`;
 }
 
 function afterHome() {
@@ -386,6 +565,8 @@ function afterHome() {
     if (el) slot.replaceWith(el);
   }
   rackCovers();
+  const w = wallCfg();
+  if (w.source !== 'off' && w.follow) askArt([...rackList.map((g) => g.id), (featured() || {}).id]);
   renderHeroInfo();
 }
 
@@ -420,7 +601,7 @@ function renderGames() {
   const all = b.list;
   const sort = ui.sort || S.settings.sort || 'lastPlayed';
   const view = S.settings.view || 'covers';
-  let list = sortGames(filtered(all), sort);
+  let list = sort === 'custom' ? customSorted(filtered(all), b.col) : sortGames(filtered(all), sort);
   if (view === 'list') {
     const k = ui.listSort.key, d = ui.listSort.dir;
     const val = { name: (g) => g.name.toLowerCase(), source: (g) => sourceLabel(g), status: (g) => STATUS_LABEL[g.status || ''], total: (g) => g.total, lastPlayed: (g) => g.lastPlayed || 0, added: (g) => g.added };
@@ -444,7 +625,7 @@ function renderGames() {
       ${genres.length ? fsel('genre', 'Genre', genres.map((x) => [x, x])) : ''}
       ${ui.f.source || ui.f.status || ui.f.genre ? '<button class="btn small ghost" data-act="clearFilters">Clear filters</button>' : ''}
       <span class="spacer"></span>
-      ${view === 'covers' ? `<select data-act="sort" aria-label="Sort">${[['lastPlayed', 'Last played'], ['name', 'Name'], ['total', 'Time played'], ['added', 'Recently added'], ['year', 'Release year']].map(([v, l]) => `<option value="${v}" ${v === sort ? 'selected' : ''}>Sort: ${l}</option>`).join('')}</select>
+      ${view === 'covers' ? `<select data-act="sort" aria-label="Sort">${[['lastPlayed', 'Last played'], ['name', 'Name'], ['total', 'Time played'], ['added', 'Recently added'], ['year', 'Release year'], ['custom', 'Your order']].map(([v, l]) => `<option value="${v}" ${v === sort ? 'selected' : ''}>Sort: ${l}</option>`).join('')}</select>
         <div class="seg" role="group" aria-label="Cover size">${[['s', 'S'], ['m', 'M'], ['l', 'L']].map(([v, l]) => `<button aria-pressed="${(S.settings.coverSize || 'm') === v}" data-act="coverSize" data-v="${v}" title="${{ s: 'Small', m: 'Medium', l: 'Large' }[v]} covers">${l}</button>`).join('')}</div>` : ''}
       <div class="seg" role="group" aria-label="View"><button aria-pressed="${view === 'covers'}" data-act="view" data-v="covers" title="Covers">${ic('grid')}</button><button aria-pressed="${view === 'list'}" data-act="view" data-v="list" title="List">${ic('list')}</button></div>
     </div>
@@ -785,27 +966,76 @@ async function runSetupScan() {
 
 /* ---------- settings ---------- */
 
+function wallPanel() {
+  const w = wallCfg(), lists = wall.lists || {};
+  const count = (n) => `${n} ${n === 1 ? 'picture' : 'pictures'}`;
+  const wtog = (key, label, sub) => `<div class="srow"><b>${label}</b><button class="toggle" role="switch" aria-label="${label}" aria-checked="${!!w[key]}" data-act="wallToggle" data-key="${key}"></button><small>${sub}</small></div>`;
+  const folderRow = (slot, path, n, empty) => `<div class="pathrow"><span class="pathtext${path ? '' : ' muted'}" title="${esc(path)}">${path ? esc(path) : empty}</span>${path ? `<small class="muted">${count(n)}</small>` : ''}
+    <button class="btn small" data-act="wallPick" data-slot="${slot}">${ic('folder')}${path ? 'Change' : 'Choose folder'}</button>${path ? `<button class="btn small ghost" data-act="wallClear" data-slot="${slot}">Clear</button>` : ''}</div>`;
+  const on = w.source !== 'off';
+  return `<div class="panel"><h2 class="title">Wallpaper</h2><p>A picture behind Rack’s screens. It’s dimmed and blurred behind text so everything stays readable.</p>
+    <div class="field"><span>Show</span><div><div class="seg big" role="group" aria-label="Wallpaper">${[['off', 'Off'], ['pictures', 'Your pictures'], ['art', 'Games’ artwork'], ['both', 'Both']].map(([v, l]) => `<button aria-pressed="${w.source === v}" data-act="wallSource" data-v="${v}">${l}</button>`).join('')}</div></div></div>
+    ${on && w.source !== 'art' ? `<div class="field"><span>Your pictures</span>${folderRow('main', w.folder, (lists.main || []).length, 'No folder chosen yet')}</div>` : ''}
+    ${on ? `<div class="field"><span>Change the picture</span><div><select data-act="wallEvery" aria-label="Change the picture">${[[0, 'Never, keep one'], [1, 'Every minute'], [5, 'Every 5 minutes'], [15, 'Every 15 minutes'], [30, 'Every 30 minutes'], [60, 'Every hour'], [180, 'Every 3 hours']].map(([v, l]) => `<option value="${v}" ${Number(w.every) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+    ${wtog('byTime', 'Change with the time of day', 'Different pictures for morning, day, evening and night. A part of the day without its own folder uses the pictures above.')}
+    ${w.byTime ? `<div class="slots">${SLOTS.map(([k, l, h]) => `<div class="slotrow${slotOf() === k ? ' now' : ''}"><b>${l}<small>${h}${slotOf() === k ? ' · now' : ''}</small></b>${folderRow(k, w.times[k], (lists[k] || []).length, 'Uses the pictures above')}</div>`).join('')}</div>` : ''}
+    ${wtog('follow', 'Follow the selected game', 'On Home and on a game’s page, show that game’s artwork')}
+    <div class="grid2">
+      <div class="field"><span>Dim <output id="wall-dim-v">${w.dim}%</output></span><input type="range" min="0" max="90" step="5" value="${w.dim}" data-act="wallRange" data-key="dim" aria-label="Dim"></div>
+      <div class="field"><span>Blur <output id="wall-blur-v">${w.blur} px</output></span><input type="range" min="0" max="30" step="1" value="${w.blur}" data-act="wallRange" data-key="blur" aria-label="Blur"></div>
+    </div>
+    <div class="field"><span>Show on</span><div><div class="seg" role="group" aria-label="Show on">${[['all', 'All screens'], ['home', 'Home only']].map(([v, l]) => `<button aria-pressed="${w.where === v}" data-act="wallWhere" data-v="${v}">${l}</button>`).join('')}</div></div></div>
+    ${w.source !== 'pictures' || w.follow ? `<p class="note">Game artwork comes from Steam for Steam games, and from SteamGridDB for others once you add a key under Covers. A game without it shows its blurred cover.</p>` : ''}` : ''}
+  </div>`;
+}
+function homePanel() {
+  const st = S.settings, desk = st.homeLayout === 'desktop', rows = homeRows();
+  return `<div class="panel"><h2 class="title">Home</h2><p>Shelves show your rows of games under the rack. Desktop lets you place games anywhere, like icons on a desktop.</p>
+    <div class="field"><span>Layout</span><div><div class="seg big" role="group" aria-label="Home layout">${[['shelves', 'Shelves'], ['desktop', 'Desktop']].map(([v, l]) => `<button aria-pressed="${(st.homeLayout || 'shelves') === v}" data-act="homeLayout" data-v="${v}">${l}</button>`).join('')}</div></div></div>
+    ${desk ? `<div class="srow"><b>Desktop</b><span></span><small>Drag games around on Home. Drop games on Home in the sidebar, or right-click a game, to add it.</small></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" data-act="deskTidy">${ic('grid')}Tidy up</button><button class="btn ghost" data-act="deskClear">Clear the desktop</button></div>`
+    : `<div class="field"><span>Rows</span><div class="rowlist">${rows.map((r, i) => `<div class="rowitem"><button class="toggle" role="switch" aria-checked="${r.on}" aria-label="Show ${esc(rowName(r.id))}" data-act="rowToggle" data-row="${esc(r.id)}"></button><b>${esc(rowName(r.id))}</b>${r.id.startsWith('col:') ? '<small class="muted">Collection</small>' : ''}<span class="spacer"></span>
+        <button class="btn small ghost" data-act="rowMove" data-row="${esc(r.id)}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">${ic('up')}</button><button class="btn small ghost" data-act="rowMove" data-row="${esc(r.id)}" data-d="1" ${i === rows.length - 1 ? 'disabled' : ''} aria-label="Move down">${ic('down')}</button></div>`).join('')}</div></div>
+      <p class="note">You can also drag a row by its handle on Home, and drop games onto Favourites, Playing, Backlog or a collection row to add them. <button class="link" data-act="rowsReset">Reset rows</button></p>`}
+  </div>`;
+}
+const setWall = (patch) => call(R.setSettings({ wallpaper: { ...wallCfg(), ...patch } }));
+
 function renderSettings() {
   const s = S.settings;
   const tog = (key, label, sub, disabled = false) => `<div class="srow"><b>${label}</b><button class="toggle" role="switch" aria-label="${label}" aria-checked="${!!s[key]}" data-act="setToggle" data-key="${key}" ${disabled ? 'disabled' : ''}></button><small>${sub}</small></div>`;
   const u = S.update || {};
   const updText = !S.app.packaged ? 'Updates work in the installed app.' : u.status === 'checking' ? 'Checking for updates…' : u.status === 'downloading' ? `Downloading ${u.version || 'the update'}… ${u.progress || 0}%`
     : u.status === 'ready' ? `Rack ${u.version} is ready. Restart Rack to finish.` : u.status === 'available' ? `Rack ${u.version} is out.` : u.status === 'current' ? 'Rack is up to date.' : u.status === 'error' ? `Couldn’t check for updates: ${u.error}` : 'Rack checks for updates on its own.';
-  const swatch = (k) => `<button class="swatch" aria-pressed="${s.accent === k}" data-act="setAccent" data-v="${k}" title="${ACCENT_NAMES[k]}" aria-label="${ACCENT_NAMES[k]}" style="background:${k === 'mono' ? 'linear-gradient(135deg,#f2f2f3 50%,#1b1f27 50%)' : ACCENTS[k]}"></button>`;
+  const th = themeById(s.themeId), mode = themeMode(th, s);
+  const accSel = th.id === 'rack' && (!s.accent || s.accent === 'theme') ? 'mono' : s.accent || 'theme';
+  const swatch = (k) => `<button class="swatch" aria-pressed="${accSel === k}" data-act="setAccent" data-v="${k}" title="${ACCENT_NAMES[k]}" aria-label="${ACCENT_NAMES[k]}" style="background:${k === 'mono' ? 'linear-gradient(135deg,#f2f2f3 50%,#1b1f27 50%)' : k === 'theme' ? th[mode].accent : ACCENTS[k]}"></button>`;
+  const themeCard = (t) => {
+    const m = darkOnly(t) ? 'dark' : mode;
+    const p = t.id === 'rack' ? RACK_PREVIEW[m === 'dark' ? s.darkShade || 'graphite' : s.lightShade || 'cool'] : t[m];
+    return `<button class="themecard" aria-pressed="${th.id === t.id}" data-act="setTheme" data-v="${t.id}">
+      <span class="tprev" data-font-preview="${t.font}" style="--p-bg:${p.bg};--p-rail:${p.rail};--p-raise:${p.raise};--p-line:${p.line};--p-ink:${p.ink};--p-faint:${p.faint};--p-acc:${p.accent || p.ink}${p.glow ? `;--p-glow:${p.glow}` : ''}" aria-hidden="true"><i class="tr"></i><i class="tc"><b class="title">Aa</b><i class="tl"></i><i class="tl short"></i></i><i class="ta"></i></span>
+      <span class="tname">${esc(t.name)}</span><small>${darkOnly(t) ? 'Dark only' : 'Dark and light'}</small></button>`;
+  };
   return `<div class="page" style="max-width:940px">
     <h1 class="title" style="margin:0;font-size:34px">Settings</h1>
     <div style="display:grid;gap:20px;margin-top:22px">
-      <div class="panel"><h2 class="title">Appearance</h2><p>System follows the light or dark setting in Windows.</p>
-        <div class="field"><span>Theme</span><div><div class="seg big" role="group" aria-label="Theme">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button aria-pressed="${s.theme === v}" data-act="theme" data-v="${v}">${l}</button>`).join('')}</div></div></div>
-        <div class="field"><span>Accent colour</span><div class="swatches">${Object.keys(ACCENTS).map(swatch).join('')}
+      <div class="panel"><h2 class="title">Appearance</h2><p>A theme recolours the whole app and brings its own font. You can still change the accent and font after picking one.</p>
+        <div class="field"><span>Theme</span><div class="themes">${THEMES.map(themeCard).join('')}</div></div>
+        ${th.credit ? `<p class="note" style="margin-top:-4px">${esc(th.credit)}.</p>` : ''}
+        <div class="field"><span>Mode</span><div><div class="seg big" role="group" aria-label="Mode">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button aria-pressed="${!darkOnly(th) && s.theme === v || darkOnly(th) && v === 'dark'}" data-act="theme" data-v="${v}" ${darkOnly(th) ? 'disabled' : ''}>${l}</button>`).join('')}</div>
+          <span class="muted" style="font-size:12px;margin-left:10px">${darkOnly(th) ? `${esc(th.name)} comes in dark only.` : 'System follows the light or dark setting in Windows.'}</span></div></div>
+        <div class="field"><span>Accent colour</span><div class="swatches">${th.id === 'rack' ? '' : swatch('theme')}${Object.keys(ACCENTS).map(swatch).join('')}
           <label class="swatch custom" title="Your colour" aria-pressed="${s.accent === 'custom'}" style="${s.accent === 'custom' ? `background:${esc(s.accentCustom)}` : ''}"><input type="color" value="${esc(s.accentCustom || '#7c9cff')}" data-act="customAccent" aria-label="Pick your own accent colour"></label>
-          <span class="muted" style="font-size:12px">${esc(ACCENT_NAMES[s.accent] || '')}</span></div></div>
-        <div class="grid2">
+          <span class="muted" style="font-size:12px">${esc(ACCENT_NAMES[accSel] || '')}</span></div></div>
+        ${th.id === 'rack' ? `<div class="grid2">
           <div class="field"><span>Dark background</span><div class="shades">${DARK_SHADES.map(([k, l, c]) => `<button class="shade" aria-pressed="${s.darkShade === k}" data-act="setShade" data-key="darkShade" data-v="${k}"><i style="background:${c}"></i><span>${l}</span></button>`).join('')}</div></div>
           <div class="field"><span>Light background</span><div class="shades">${LIGHT_SHADES.map(([k, l, c]) => `<button class="shade" aria-pressed="${s.lightShade === k}" data-act="setShade" data-key="lightShade" data-v="${k}"><i style="background:${c}"></i><span>${l}</span></button>`).join('')}</div></div>
-        </div>
-        <div class="field"><span>Font</span><div class="fonts">${FONTS.map(([k, l, d]) => `<button class="fontopt" aria-pressed="${s.font === k}" data-act="setFont" data-v="${k}" data-font-preview="${k}"><b class="title">${l}</b><span>${d}</span></button>`).join('')}</div></div>
+        </div>` : ''}
+        <div class="field"><span>Font</span><div class="fonts">${th.id === 'rack' ? '' : `<button class="fontopt" aria-pressed="${!s.font || s.font === 'theme'}" data-act="setFont" data-v="theme" data-font-preview="${th.font}"><b class="title">${esc(th.name)}</b><span>The theme’s own: ${esc((FONTS.find((f) => f[0] === th.font) || FONTS[0])[1])}</span></button>`}${FONTS.map(([k, l, d]) => `<button class="fontopt" aria-pressed="${s.font === k || th.id === 'rack' && k === 'rack' && (!s.font || s.font === 'theme')}" data-act="setFont" data-v="${k}" data-font-preview="${k}"><b class="title">${l}</b><span>${d}</span></button>`).join('')}</div></div>
       </div>
+      ${wallPanel()}
+      ${homePanel()}
       <div class="panel"><h2 class="title">Playing</h2>
         ${S.app.windows && !S.app.native ? `<p class="note warnnote">Rack couldn’t load its Windows helper${S.app.nativeError ? ` (${esc(S.app.nativeError)})` : ''}, so it uses PowerShell to start and time games. It still works, but noticing a game can take a few seconds longer.</p>` : ''}
         <div class="field"><span>When a game starts</span><div><div class="seg big" role="group" aria-label="When a game starts">${[['close', 'Close Rack’s window'], ['minimize', 'Minimise'], ['nothing', 'Do nothing']].map(([v, l]) => `<button aria-pressed="${s.whilePlaying === v}" data-act="whilePlaying" data-v="${v}">${l}</button>`).join('')}</div></div>
@@ -880,12 +1110,117 @@ setInterval(() => { for (const el of document.querySelectorAll('[data-since]')) 
 let pending = false;
 const editing = () => { const a = document.activeElement; return a && a !== $('#search') && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.closest('#view, #rail, #dock'); };
 
+/* ---------- wallpaper ---------- */
+
+const WALL = { source: 'off', folder: '', every: 15, byTime: false, times: { morning: '', day: '', evening: '', night: '' }, follow: true, dim: 60, blur: 8, where: 'all' };
+const wallCfg = () => { const w = (S && S.settings.wallpaper) || {}; return { ...WALL, ...w, times: { ...WALL.times, ...(w.times || {}) } }; };
+const SLOTS = [['morning', 'Morning', '5–11'], ['day', 'Day', '11–17'], ['evening', 'Evening', '17–21'], ['night', 'Night', '21–5']];
+/** The part of the day: morning 5–11, day 11–17, evening 17–21, night 21–5. */
+const slotOf = (d = new Date()) => { const h = d.getHours(); return h >= 5 && h < 11 ? 'morning' : h >= 11 && h < 17 ? 'day' : h >= 17 && h < 21 ? 'evening' : 'night'; };
+const heroUrl = (g) => (g && g.hero ? `${window.RACK_HERO_BASE || 'rack://hero/'}${encodeURIComponent(g.hero)}` : '');
+const wall = { lists: null, listKey: '', pick: null, since: 0, slot: '', layer: 0, shown: '', timer: 0, asked: new Set(), bad: new Set() };
+
+/** Asks the main process to fetch wide art for these games (once per game per session). */
+function askArt(ids) {
+  const want = ids.filter((id) => id && !wall.asked.has(id) && !(byId(id) || {}).hero);
+  if (!want.length || !R.artWant) return;
+  want.forEach((id) => wall.asked.add(id));
+  R.artWant(want);
+}
+/** Your picture folders, listed again whenever the folders change. */
+async function loadWallLists() {
+  const w = wallCfg();
+  const key = JSON.stringify([w.source, w.folder, w.byTime, w.times]);
+  if (key === wall.listKey) return;
+  wall.listKey = key;
+  const needs = w.source === 'pictures' || w.source === 'both' || w.byTime;
+  wall.lists = needs && R.wallList ? await R.wallList().catch(() => null) : null;
+  wall.pick = null;
+  updateWall(true);
+}
+function artPool() {
+  const games = S.games.filter(visible);
+  const heroes = games.filter((g) => g.hero).map((g) => ({ url: heroUrl(g) }));
+  // until wide art arrives, the covers stand in, blurred much more
+  return heroes.length ? heroes : games.filter((g) => g.cover).map((g) => ({ url: coverUrl(g), soft: true }));
+}
+function wallPool(w) {
+  const lists = wall.lists || {};
+  const forNow = w.byTime ? lists[slotOf()] || [] : [];
+  if (forNow.length) return forNow.map((x) => ({ url: x.url })); // this part of the day's own pictures come first
+  const mine = w.source === 'art' ? [] : (lists.main || []).map((x) => ({ url: x.url }));
+  const art = w.source === 'pictures' ? [] : artPool();
+  return [...mine, ...art].filter((x) => !wall.bad.has(x.url));
+}
+/** What the wallpaper should show right now, or null for none. */
+function wallTarget() {
+  const w = wallCfg();
+  if (w.source === 'off') return null;
+  if (w.where === 'home' && ui.view !== 'home') return null;
+  if (w.follow) {
+    const g = ui.view === 'home' ? byId(ui.preview) || featured() : ui.view === 'detail' ? byId(ui.detail.id) : null;
+    if (g && (g.hero || g.cover)) {
+      if (!g.hero) askArt([g.id]);
+      const url = heroUrl(g) || coverUrl(g);
+      if (!wall.bad.has(url)) return { url, soft: !g.hero };
+    }
+  }
+  const pool = wallPool(w);
+  if (!pool.length) return null;
+  const now = Date.now(), slot = slotOf();
+  const due = w.every > 0 && now - wall.since >= w.every * 60000;
+  if (!wall.pick || !pool.some((x) => x.url === wall.pick.url) || due || (w.byTime && slot !== wall.slot)) {
+    const others = pool.filter((x) => !wall.pick || x.url !== wall.pick.url);
+    const from = others.length ? others : pool;
+    wall.pick = from[Math.floor(Math.random() * from.length)];
+    wall.since = now; wall.slot = slot;
+  }
+  return wall.pick;
+}
+function showWall(t) {
+  const root = document.documentElement, w = wallCfg(), el = $('#wall');
+  if (!el) return;
+  root.style.setProperty('--wall-dim', String(Math.max(0, Math.min(90, w.dim)) / 100));
+  root.style.setProperty('--wall-blur', `${Math.max(0, Math.min(30, w.blur))}px`);
+  if (!t) {
+    delete root.dataset.wall;
+    wall.shown = '';
+    el.querySelectorAll('.wl').forEach((l) => l.classList.remove('on'));
+    return;
+  }
+  root.dataset.wall = 'on';
+  if (t.url === wall.shown) return;
+  wall.shown = t.url;
+  // load first, then cross-fade, so a slow picture never flashes in half drawn
+  const img = new Image();
+  img.onload = () => {
+    if (wall.shown !== t.url) return; // a newer one was asked for meanwhile
+    const layers = el.querySelectorAll('.wl');
+    wall.layer = 1 - wall.layer;
+    const next = layers[wall.layer], prev = layers[1 - wall.layer];
+    next.style.backgroundImage = `url("${t.url.replace(/"/g, '%22')}")`;
+    next.classList.toggle('soft', !!t.soft);
+    next.classList.add('on');
+    prev.classList.remove('on');
+  };
+  img.onerror = () => { wall.bad.add(t.url); if (wall.shown === t.url) { wall.shown = ''; wall.pick = null; updateWall(true); } };
+  img.src = t.url;
+}
+/** Re-decides the wallpaper; pointing at games on Home waits a moment so it doesn't flicker. */
+function updateWall(now = false) {
+  if (!S) return;
+  clearTimeout(wall.timer);
+  wall.timer = setTimeout(() => showWall(wallTarget()), now || !wall.shown ? 0 : 280);
+}
+setInterval(() => updateWall(true), 20000); // the timer and the time of day
+
 function render() {
   if (!S) return;
   applyAppearance();
+  loadWallLists();
   renderTitlebar();
   renderDock();
-  if (editing()) { pending = true; return; }
+  if (editing() || drag.active) { pending = true; return; }
   pending = false;
   renderRail();
   const view = $('#view');
@@ -901,6 +1236,7 @@ function render() {
   for (const [id, top] of inner) { const el = document.getElementById(id); if (el) el.scrollTop = top; }
   if (focusKey) { const el = view.querySelector(`[data-fk="${CSS.escape(focusKey)}"]`); if (el) el.focus({ preventScroll: true }); }
   if (ui.view === 'home') afterHome();
+  updateWall();
 }
 document.addEventListener('focusout', () => setTimeout(() => { if (pending && !editing()) render(); }, 0));
 
@@ -1114,6 +1450,20 @@ const ACT = {
   setAccent: (el) => call(R.setSettings({ accent: el.dataset.v })),
   setShade: (el) => call(R.setSettings({ [el.dataset.key]: el.dataset.v })),
   setFont: (el) => call(R.setSettings({ font: el.dataset.v })),
+  wallSource: (el) => setWall({ source: el.dataset.v }),
+  hideRow: (el) => { const rows = homeRows(); const r = rows.find((x) => x.id === el.dataset.row); if (r) { r.on = false; saveRows(rows); toast(`Hid ${rowName(r.id)}. Bring it back in Settings › Home.`); } },
+  rowToggle: (el) => { const rows = homeRows(); const r = rows.find((x) => x.id === el.dataset.row); if (r) { r.on = !r.on; saveRows(rows); } },
+  rowMove: (el) => { const rows = homeRows(), i = rows.findIndex((x) => x.id === el.dataset.row), j = i + Number(el.dataset.d); if (i < 0 || j < 0 || j >= rows.length) return; [rows[i], rows[j]] = [rows[j], rows[i]]; saveRows(rows); },
+  rowsReset: () => call(R.setSettings({ homeRows: null })),
+  homeLayout: (el) => call(R.setSettings({ homeLayout: el.dataset.v })),
+  deskTidy: () => deskTidy(),
+  deskClear: () => saveDesk([]),
+  wallWhere: (el) => setWall({ where: el.dataset.v }),
+  wallToggle: (el) => setWall({ [el.dataset.key]: !wallCfg()[el.dataset.key] }),
+  wallPick: async (el) => { const r = await R.wallPick(el.dataset.slot); if (r && r.ok) { wall.listKey = ''; loadWallLists(); } },
+  wallClear: (el) => call(R.wallClear(el.dataset.slot)),
+  // a theme is a whole look: it brings its own accent and font, which you can change afterwards
+  setTheme: (el) => call(R.setSettings({ themeId: el.dataset.v, accent: 'theme', font: 'theme' })),
   whilePlaying: (el) => call(R.setSettings({ whilePlaying: el.dataset.v })),
   setToggle: (el) => call(R.setSettings({ [el.dataset.key]: !S.settings[el.dataset.key] })),
   toggleSource: (el) => call(R.setSettings({ sources: { ...S.settings.sources, [el.dataset.key]: S.settings.sources[el.dataset.key] === false } })),
@@ -1170,6 +1520,8 @@ document.addEventListener('change', (e) => {
   if (el.dataset.act === 'addCol' && el.value) { ui.detail.draft.collections.push(el.value); el.blur(); render(); }
   if (el.dataset.act === 'exeChoice') ui.scan.exeChoice[el.dataset.id] = el.value;
   if (el.dataset.act === 'customAccent') call(R.setSettings({ accent: 'custom', accentCustom: el.value }));
+  if (el.dataset.act === 'wallEvery') { wall.since = 0; setWall({ every: Number(el.value) }); }
+  if (el.dataset.act === 'wallRange') setWall({ [el.dataset.key]: Number(el.value) });
   if (el.dataset.act === 'selStatus' && el.value) { call(R.bulk([...ui.sel], { status: el.value === 'none' ? '' : el.value })); el.value = ''; }
   if (el.dataset.act === 'selCollection' && el.value) {
     const v = el.value; el.value = '';
@@ -1186,6 +1538,11 @@ document.addEventListener('input', (e) => {
   }
   if (el.dataset.na) { ui.detail.newAction[el.dataset.na] = el.value; const b = $('[data-act="naSave"]'); if (b) b.disabled = !(ui.detail.newAction.name.trim() && ui.detail.newAction.exe); }
   if (el.dataset.rom) ui.scan.romForm[el.dataset.rom] = el.value;
+  if (el.dataset.act === 'wallRange') {
+    const k = el.dataset.key, v = Number(el.value);
+    document.documentElement.style.setProperty(k === 'dim' ? '--wall-dim' : '--wall-blur', k === 'dim' ? String(v / 100) : `${v}px`);
+    const out = document.getElementById(`wall-${k}-v`); if (out) out.textContent = k === 'dim' ? `${v}%` : `${v} px`;
+  }
   if (el.id === 'search') {
     if (el.value.trim()) { if (ui.view !== 'search') { ui.back = { view: ui.view, arg: ui.arg }; ui.view = 'search'; ui.arg = null; } render(); }
     else if (ui.view === 'search') go(ui.back ? ui.back.view : 'home', ui.back ? ui.back.arg : null);
@@ -1224,6 +1581,12 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && !typing && (ui.view === 'games' || ui.view === 'search')) { e.preventDefault(); for (const id of visibleIds()) ui.sel.add(id); syncSelection(); return; }
   const fk = a && a.closest && a.closest('[data-fk]');
   if (!fk || typing) return;
+  if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && ui.view === 'games' && fk.closest('.grid')) {
+    e.preventDefault();
+    const shown = visibleIds(), i = shown.indexOf(fk.dataset.id), j = e.key === 'ArrowLeft' ? i - 1 : i + 1;
+    if (i >= 0 && j >= 0 && j < shown.length) reorder([fk.dataset.id], shown[j], e.key === 'ArrowRight');
+    return;
+  }
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) { if (moveFocus(fk, e.key)) e.preventDefault(); return; }
   if (e.key === 'Enter') { e.preventDefault(); const g = byId(fk.dataset.id); if (g && !g.missing) ACT.play(fk); return; }
   if (e.key === ' ' && fk.tagName === 'TR') { e.preventDefault(); go('detail', fk.dataset.id); }
@@ -1240,6 +1603,174 @@ document.addEventListener('pointerout', (e) => {
   if (t && !t.contains(e.relatedTarget) && rackHandle && rackHandle.pick) rackHandle.pick(-1);
 });
 
+/* ---------- dragging ---------- */
+// Pointer-based, so it works the same for game tiles, list rows, desktop icons and Home rows.
+// A drag starts only after the pointer moves a few pixels, so clicks and double-clicks still work.
+
+const drag = { start: null, active: false, kind: '', ids: [], ghost: null, target: null, mark: null, swallow: false, scroll: 0, x: 0, y: 0 };
+const DRAG_PX = 6;
+const STATUS_DROPS = ['playing', 'backlog', 'completed', 'dropped'];
+
+document.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || ui.modal || drag.active) return;
+  const t = e.target;
+  if (!t.closest || t.closest('input, select, textarea, .play, .rowplay, .rowx')) return;
+  const grip = t.closest('#view .grip[data-row]');
+  const desk = t.closest('#desk .dtile[data-gid]');
+  const item = t.closest('#view [data-gid].tile, #view tr.lrow[data-gid]');
+  if (grip) drag.start = { x: e.clientX, y: e.clientY, kind: 'row', row: grip.dataset.row };
+  else if (desk) { const r = desk.getBoundingClientRect(); drag.start = { x: e.clientX, y: e.clientY, kind: 'desk', id: desk.dataset.gid, dx: e.clientX - r.left, dy: e.clientY - r.top }; }
+  else if (item) drag.start = { x: e.clientX, y: e.clientY, kind: 'game', id: item.dataset.gid, grid: !!item.closest('#view .grid') };
+});
+document.addEventListener('pointermove', (e) => {
+  const st = drag.start;
+  if (!st) return;
+  if (!drag.active) {
+    if (Math.hypot(e.clientX - st.x, e.clientY - st.y) < DRAG_PX) return;
+    beginDrag(st);
+  }
+  drag.x = e.clientX; drag.y = e.clientY;
+  moveDrag();
+});
+document.addEventListener('pointerup', () => { if (drag.active) endDrag(true); drag.start = null; });
+window.addEventListener('blur', () => { if (drag.active) endDrag(false); drag.start = null; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drag.active) { e.stopPropagation(); endDrag(false); drag.start = null; } }, true);
+// the click that ends a drag doesn't also open the game
+document.addEventListener('click', (e) => { if (drag.swallow) { e.stopPropagation(); e.preventDefault(); drag.swallow = false; } }, true);
+
+function beginDrag(st) {
+  drag.active = true; drag.kind = st.kind;
+  drag.ids = st.kind === 'row' ? [] : st.kind === 'game' && ui.sel.has(st.id) ? [...ui.sel].filter((id) => byId(id)) : [st.id];
+  const g = byId(drag.ids[0]);
+  const el = document.createElement('div');
+  el.className = 'dragghost' + (st.kind === 'desk' ? ' big' : '');
+  el.innerHTML = st.kind === 'row'
+    ? `<span class="gname">${ic('grip')}${esc(rowName(st.row))}</span>`
+    : `${coverHTML(g, { src: false, state: false })}<span class="gname">${esc(g.name)}</span>${drag.ids.length > 1 ? `<b class="badge">${drag.ids.length}</b>` : ''}`;
+  document.body.appendChild(el);
+  drag.ghost = el;
+  document.body.classList.add('dragging');
+  if (st.kind === 'desk') { const src = document.querySelector(`#desk .dtile[data-gid="${CSS.escape(st.id)}"]`); if (src) src.classList.add('lifted'); }
+  if (st.kind === 'row') { const src = document.querySelector(`#view .shelf[data-row="${CSS.escape(st.row)}"]`); if (src) src.classList.add('lifted'); }
+  if (st.kind !== 'row') renderRail(); // shows every status list while dragging, so each can take a drop
+  clearInterval(drag.scroll);
+  drag.scroll = setInterval(autoScroll, 30);
+}
+
+/** What is under the pointer, and what dropping there would do. */
+function dropTarget() {
+  const st = drag.start, el = document.elementFromPoint(drag.x, drag.y);
+  if (!el || !el.closest) return null;
+  if (st.kind === 'row') {
+    const sh = el.closest('#view .shelf[data-row]');
+    if (!sh || sh.dataset.row === st.row) return null;
+    const r = sh.getBoundingClientRect();
+    return { type: 'row', el: sh, row: sh.dataset.row, after: drag.y > r.top + r.height / 2 };
+  }
+  const rail = el.closest('#rail button[data-col], #rail button[data-arg], #rail button[data-act="newCollection"], #rail button[data-view="home"]');
+  if (rail) {
+    const a = rail.dataset.arg || '';
+    if (rail.dataset.act === 'newCollection') return { type: 'newcol', el: rail };
+    if (rail.dataset.view === 'home') return S.settings.homeLayout === 'desktop' ? { type: 'desk-add', el: rail } : null;
+    if (rail.dataset.col) return { type: 'col', el: rail, col: rail.dataset.col };
+    if (a === 'fav') return { type: 'fav', el: rail };
+    if (a.startsWith('l:') && (STATUS_DROPS.includes(a.slice(2)) || a === 'l:hidden')) return { type: a === 'l:hidden' ? 'hide' : 'status', el: rail, status: a.slice(2) };
+    return null;
+  }
+  if (st.kind === 'desk' && el.closest('#desk')) return { type: 'desk-move', el: $('#desk') };
+  if (st.kind === 'game' && st.grid) {
+    const t = el.closest('#view .grid .tile[data-gid]');
+    if (t && !drag.ids.includes(t.dataset.gid)) { const r = t.getBoundingClientRect(); return { type: 'order', el: t, id: t.dataset.gid, after: drag.x > r.left + r.width / 2 }; }
+  }
+  const shelf = el.closest('#view .shelf[data-drop]');
+  if (shelf) {
+    const d = shelf.dataset.drop;
+    if (d === 'fav') return { type: 'fav', el: shelf };
+    if (d.startsWith('c:')) return { type: 'col', el: shelf, col: d.slice(2) };
+    if (d.startsWith('l:')) return { type: 'status', el: shelf, status: d.slice(2) };
+  }
+  return null;
+}
+
+/** The desktop cell under the dragged icon's centre. */
+function deskCell() {
+  const desk = $('#desk'), r = desk.getBoundingClientRect(), st = drag.start;
+  const x = drag.x - st.dx - r.left - DESK_PAD + CELL_W / 2, y = drag.y - st.dy - r.top - 8 + CELL_H / 2;
+  return [Math.max(0, Math.min(deskCols() - 1, Math.floor(x / CELL_W))), Math.max(0, Math.floor(y / CELL_H))];
+}
+
+function moveDrag() {
+  const g = drag.ghost;
+  if (g) g.style.transform = `translate(${drag.x + 14}px, ${drag.y + 14}px)`;
+  const t = dropTarget();
+  if (drag.mark) { drag.mark.classList.remove('droptarget', 'drop-before', 'drop-after'); drag.mark = null; }
+  const ph = $('#deskspot');
+  if (t && t.type === 'desk-move') {
+    const [c, r] = deskCell();
+    let spot = ph;
+    if (!spot) { spot = document.createElement('div'); spot.id = 'deskspot'; spot.className = 'deskspot'; $('#desk').appendChild(spot); }
+    spot.style.setProperty('--c', c); spot.style.setProperty('--r', r);
+  } else if (ph) ph.remove();
+  if (t && t.el && t.type !== 'desk-move') {
+    t.el.classList.add(t.type === 'order' || t.type === 'row' ? (t.after ? 'drop-after' : 'drop-before') : 'droptarget');
+    drag.mark = t.el;
+  }
+  drag.target = t;
+}
+
+function autoScroll() {
+  const v = $('#view');
+  if (!v || !drag.active) return;
+  const r = v.getBoundingClientRect(), edge = 56;
+  const dy = drag.y < r.top + edge ? -(r.top + edge - drag.y) : drag.y > r.bottom - edge ? drag.y - (r.bottom - edge) : 0;
+  if (dy) { v.scrollTop += Math.max(-24, Math.min(24, dy / 2)); moveDrag(); }
+}
+
+async function endDrag(drop) {
+  const t = drop ? drag.target : null, ids = drag.ids, st = drag.start;
+  clearInterval(drag.scroll);
+  if (drag.ghost) drag.ghost.remove();
+  if (drag.mark) drag.mark.classList.remove('droptarget', 'drop-before', 'drop-after');
+  const ph = $('#deskspot'); if (ph) ph.remove();
+  document.querySelectorAll('.lifted').forEach((x) => x.classList.remove('lifted'));
+  document.body.classList.remove('dragging');
+  Object.assign(drag, { active: false, ghost: null, mark: null, target: null, swallow: true });
+  setTimeout(() => { drag.swallow = false; }, 0);
+  const names = () => (ids.length === 1 ? (byId(ids[0]) || {}).name : `${ids.length} games`);
+  if (t) {
+    if (t.type === 'col') { const c = S.collections.find((x) => x.id === t.col); await call(R.bulk(ids, { addCollection: t.col }), c ? `Added ${names()} to ${c.name}` : ''); }
+    else if (t.type === 'fav') await call(R.bulk(ids, { favourite: true }), `Added ${names()} to Favourites`);
+    else if (t.type === 'status') await call(R.bulk(ids, { status: t.status }), `Marked ${names()} as ${STATUS_LABEL[t.status].toLowerCase()}`);
+    else if (t.type === 'hide') await call(R.bulk(ids, { hidden: true }), `Hid ${names()}`);
+    else if (t.type === 'newcol') await newCollectionFor(ids);
+    else if (t.type === 'desk-add') deskAdd(ids);
+    else if (t.type === 'order') await reorder(ids, t.id, t.after);
+    else if (t.type === 'row') moveRow(st.row, t.row, t.after);
+    else if (t.type === 'desk-move') {
+      const [c, r] = deskCell();
+      const items = deskItems(), me = items.find((x) => x.g.id === ids[0]);
+      if (me) {
+        const other = items.find((x) => x !== me && x.c === c && x.r === r);
+        if (other) { other.c = me.c; other.r = me.r; } // dropping on an icon swaps the two
+        me.c = c; me.r = r;
+        saveDesk(items);
+      }
+    }
+  }
+  render();
+}
+
+function moveRow(id, target, after) {
+  const rows = homeRows(), from = rows.findIndex((r) => r.id === id);
+  if (from < 0) return;
+  const [row] = rows.splice(from, 1);
+  let at = rows.findIndex((r) => r.id === target);
+  if (at < 0) return;
+  if (after) at++;
+  rows.splice(at, 0, row);
+  saveRows(rows);
+}
+
 /* ---------- start ---------- */
 
 R.onToast(({ text, kind }) => toast(text, kind));
@@ -1253,6 +1784,9 @@ R.onTheme(() => applyAppearance());
 R.onGo((v) => go(v));
 R.onMenu(({ action, ids, id }) => {
   if (action === 'open') go('detail', ids[0]);
+  if (action === 'deskAdd') deskAdd(ids || []);
+  if (action === 'deskRemove') deskRemove(ids || []);
+  if (action === 'rowToggle') ACT.rowToggle({ dataset: { row: id } });
   if (action === 'newCollection') newCollectionFor(ids || []);
   if (action === 'remove') removeIds(ids);
   if (action === 'uninstall') uninstallAsk(ids[0]);

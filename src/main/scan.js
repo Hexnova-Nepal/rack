@@ -106,22 +106,26 @@ async function scanSteam(opts = {}) {
 }
 
 /** Steam keeps cover art for installed games on disk; use it before asking the internet. */
-function steamCachedCover(root, appid) {
+/** A picture Steam keeps for a game in its library cache: 'library_600x900' (the cover) or 'library_hero' (wide art). */
+function steamCachedArt(root, appid, kind = 'library_600x900') {
   if (!root) return null;
   const lc = path.join(root, 'appcache', 'librarycache');
-  const flat = path.join(lc, `${appid}_library_600x900.jpg`);
+  const flat = path.join(lc, `${appid}_${kind}.jpg`);
   if (exists(flat)) return flat;
   const dir = path.join(lc, String(appid));
+  const want = new RegExp(`^${kind}(_2x)?\\.jpg$`, 'i');
   const look = (d, depth) => {
     let items = [];
     try { items = fs.readdirSync(d, { withFileTypes: true }); } catch { return null; }
-    const hit = items.find((e) => e.isFile() && /^library_600x900(_2x)?\.jpg$/i.test(e.name));
+    const hit = items.find((e) => e.isFile() && want.test(e.name));
     if (hit) return path.join(d, hit.name);
     if (depth > 0) for (const e of items) if (e.isDirectory()) { const r = look(path.join(d, e.name), depth - 1); if (r) return r; }
     return null;
   };
   return look(dir, 2);
 }
+const steamCachedCover = (root, appid) => steamCachedArt(root, appid, 'library_600x900');
+const steamCachedHero = (root, appid) => steamCachedArt(root, appid, 'library_hero');
 
 /* ---------------- Epic ---------------- */
 
@@ -191,4 +195,4 @@ async function scanRoms(rf) {
 
 const steamNotGame = (id, name) => STEAM_NOT_GAMES.has(String(id)) || STEAM_NOT_GAME_NAMES.test(name || '');
 
-module.exports = { scanSteam, scanEpic, scanGog, scanRoms, steamCachedCover, steamRoot, parseReg, steamNotGame };
+module.exports = { scanSteam, scanEpic, scanGog, scanRoms, steamCachedCover, steamCachedHero, steamCachedArt, steamRoot, parseReg, steamNotGame };

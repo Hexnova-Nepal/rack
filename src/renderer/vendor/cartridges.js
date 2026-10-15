@@ -1,7 +1,9 @@
 /**
  * Cartridges: seven game cartridges standing in the slots of a low rack. One
- * sits half out at rest: the one being played. The cartridge under the pointer
- * lifts out of its slot; its neighbours lift less, staggered outwards from it.
+ * sits half out at rest: the one being played. The cartridge under the pointer,
+ * anywhere on what you can see of it, lifts out of its slot; the ones behind it
+ * lift less, staggered back from it, and the ones in front stay put so they never
+ * slide under the pointer and steal it.
  * Each cartridge has chamfered shoulders, grip ridges along its top and a
  * label recess, and its number is a lit dot on the label. The slider is how far
  * the chosen cartridge lifts.
@@ -52,7 +54,7 @@ function mount({ stage, svg, read }, value) {
   const carts = [], id = "hl-cv" + ++uid;
   const defs = mk("defs", {}, svg);
   for (let i = 0; i < N; i++) {
-    const grp = mk("g", {}, g), s = solid(grp);
+    const grp = mk("g", { "data-cart": i }, g), s = solid(grp);
     // the cover, in the label's own flat coordinates; a matrix lays it on the face
     const clip = mk("clipPath", { id: id + i, clipPathUnits: "userSpaceOnUse" }, defs);
     mk("rect", { x: 0, y: 0, width: LU1 - LU0, height: LV1 - LV0, rx: 3 }, clip);
@@ -65,14 +67,26 @@ function mount({ stage, svg, read }, value) {
     carts.push({ s, art, img, label, ridges, dg, dots, url: "", z: tween(z0), last: NaN });
   }
 
+  // a cartridge's outline on screen at lift L
+  function shapeAt(i, L) {
+    const zb = RH - SINK + L, v0 = Math.max(0, SINK - L), yf = i * G + T, yb = i * G;
+    const out = outline(v0, W, H, CH, 2.5);
+    return hull(out.map((p) => P(p[0], yf, zb + p[1])).concat(out.map((p) => P(p[0], yb, zb + p[1]))));
+  }
+  // where each cartridge stands in its slot, unlifted
+  const base = Array.from({ length: N }, (_, i) => shapeAt(i, 0));
+
   function draw(i, L) {
     const cd = carts[i];
     if (L === cd.last) return;
     cd.last = L;
-    const zb = RH - SINK + L, v0 = Math.max(0, SINK - L), yf = i * G + T, yb = i * G;
-    const F = (u, v) => P(u, yf, zb + v), Bk = (u, v) => P(u, yb, zb + v);
-    const out = outline(v0, W, H, CH, 2.5);
-    const sil = poly(hull(out.map((p) => F(p[0], p[1])).concat(out.map((p) => Bk(p[0], p[1])))));
+    const zb = RH - SINK + L, v0 = Math.max(0, SINK - L), yf = i * G + T;
+    const F = (u, v) => P(u, yf, zb + v);
+    const shape = shapeAt(i, L);
+    cd.shape = shape; // what the pointer is tested against: exactly what is drawn
+    // a lifted cartridge also keeps the place it stood in, so lifting never moves it out from under the pointer
+    cd.reach = L > 0.5 ? hull(shape.concat(base[i])) : shape;
+    const sil = poly(shape);
     // the crease: the front face's inner edge where it meets the top and the right side
     const inn = fillet([[W - B, v0], [W - B, H - CH - B * 0.4], [W - CH - B * 0.4, H - B], [CH + B * 0.4, H - B]], [0.01, 2.4, 2.4, 0.01], 3);
     const crease = open(inn.map((p) => F(p[0], p[1])));
@@ -93,16 +107,21 @@ function mount({ stage, svg, read }, value) {
   });
   bag.add(Bl.unregister);
 
-  // hit bands along the RESTING top edges, unlifted: they never move, and nothing draws them
-  const top = (i) => P(W / 2, i * G + T / 2, RH - SINK + H);
-  const c0 = top(0), c1 = top(1), d = [c1[0] - c0[0], c1[1] - c0[1]];
-  const px0 = P(0, 0, 0), px1 = P(1, 0, 0), ex = [px1[0] - px0[0], px1[1] - px0[1]];
-  const HALF = W / 2 + 4, det = d[0] * ex[1] - d[1] * ex[0];
+  // the pointer belongs to the front-most cartridge whose drawn outline holds it
+  const inside = (pts, x, y) => {
+    let c = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+  const covered = (i, x, y) => { for (let j = N - 1; j > i; j--) if (carts[j].shape && inside(carts[j].shape, x, y)) return true; return false; };
   function hit([x, y]) {
-    const qx = x - c0[0], qy = y - c0[1];
-    const s = (qx * ex[1] - qy * ex[0]) / det, r = (d[0] * qy - d[1] * qx) / det;
-    if (Math.abs(r) > HALF || s < -0.6 || s > N + 2.5) return -1;
-    return clamp(Math.round(s), 0, N - 1);
+    // the chosen one holds on over all it covers or vacated, unless one in front is in the way
+    if (act >= 0 && carts[act].reach && inside(carts[act].reach, x, y) && !covered(act, x, y)) return act;
+    for (let i = N - 1; i >= 0; i--) if (carts[i].shape && inside(carts[i].shape, x, y)) return i;
+    return -1;
   }
 
   let act = -1;
@@ -118,7 +137,10 @@ function mount({ stage, svg, read }, value) {
       const dist = Math.abs(i - from);
       // the front cartridge's label is already in view, so it only needs to rise a little
       const L = a === N - 1 ? Math.min(lift, 14) : lift;
-      const to = a < 0 ? (i === REST_A ? REST_LIFT : 0) : L * (FALL[Math.abs(i - a)] ?? 0);
+      // Ones in front of the chosen cartridge don't move at all: rising or dropping, they could
+      // slide over the pointer and take it. Ones behind may only rise, staggered back from it.
+      const rest = i === REST_A ? REST_LIFT : 0;
+      const to = a < 0 ? rest : i === a ? L : i > a ? rest : Math.max(rest, L * (FALL[a - i] ?? 0));
       tset(cd.z, to, now, dist * STEP);
     });
     mark(a);

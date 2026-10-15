@@ -239,6 +239,71 @@ test('updates: version comparison', () => {
   assert.ok(plain(new Error('Error: ' + 'x'.repeat(300))).length <= 140);
 });
 
+test('wallpaper: lists pictures, serves only those, parts of the day', () => {
+  const { listPictures, slotOf, Pictures } = req('wallpaper.js');
+  const W = 'walls/';
+  w(W + 'b-sunset.jpg'); w(W + 'a-forest.PNG'); w(W + 'notes.txt'); w(W + 'sub/c-sea.webp'); w(W + 'sub/deeper/d.jpg'); w(W + 'sub/deeper/too/deep/e.jpg'); w(W + '.hidden/f.jpg');
+  w('night/stars.jpg'); w('secret.jpg');
+  const list = listPictures(path.join(T, 'walls')).map((f) => path.relative(path.join(T, 'walls'), f).replace(/\\/g, '/'));
+  assert.deepStrictEqual(list, ['a-forest.PNG', 'b-sunset.jpg', 'sub/c-sea.webp', 'sub/deeper/d.jpg']);
+  assert.deepStrictEqual(listPictures(''), []);
+  assert.deepStrictEqual(listPictures(path.join(T, 'missing')), []);
+  const pics = new Pictures();
+  const out = pics.list({ folder: path.join(T, 'walls'), times: { night: path.join(T, 'night'), morning: '' } });
+  assert.strictEqual(out.main.length, 4);
+  assert.strictEqual(out.night.length, 1);
+  assert.deepStrictEqual(out.morning, []);
+  assert.ok(out.main.every((x) => /^rack:\/\/wall\/[0-9a-f]{20}$/.test(x.url) && !x.url.includes(T)), 'urls carry an id, never a path');
+  assert.strictEqual(pics.file(out.main[0].id), path.join(T, 'walls', 'a-forest.PNG'));
+  // nothing it didn't list: not another file, not a made-up id, not a path
+  assert.strictEqual(pics.file(Pictures.id(path.join(T, 'secret.jpg'))), null);
+  assert.strictEqual(pics.file('../secret.jpg'), null);
+  assert.strictEqual(pics.file(''), null);
+  // a listed file that disappears is no longer served
+  const gone = out.main.find((x) => x.name === 'b-sunset.jpg');
+  fs.unlinkSync(path.join(T, 'walls', 'b-sunset.jpg'));
+  assert.strictEqual(pics.file(gone.id), null);
+  const at = (h, m = 0) => slotOf(new Date(2026, 9, 15, h, m));
+  assert.deepStrictEqual([at(4, 59), at(5), at(10, 59), at(11), at(16, 59), at(17), at(20, 59), at(21), at(0)], ['night', 'morning', 'morning', 'day', 'day', 'evening', 'evening', 'night', 'night']);
+});
+
+test('covers: wide art from Steam’s cache, Steam’s servers, then SteamGridDB', async () => {
+  const { Covers } = req('covers.js');
+  const heroDir = path.join(T, 'heroes'); fs.mkdirSync(heroDir, { recursive: true });
+  const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(5000)]);
+  const calls = [];
+  const fakeFetch = (routes) => async (url) => {
+    calls.push(url);
+    for (const [re, r] of routes) if (re.test(url)) return typeof r === 'function' ? r(url) : r;
+    return { ok: false, status: 404, headers: { get: () => '' } };
+  };
+  const img = { ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: async () => jpg };
+  const json = (data) => ({ ok: true, status: 200, json: async () => ({ data }) });
+  const size = (w) => () => ({ width: w, height: Math.round(w / 3.1) });
+  // 1. Steam's own cache: no download at all
+  const root = path.join(T, 'steamroot'); w('steamroot/appcache/librarycache/620/x/library_hero.jpg', 'cachedhero');
+  const scan = req('scan.js');
+  let c = new Covers({ fetch: fakeFetch([]), coverDir: heroDir, heroDir, imageSize: size(1920) });
+  let f = await c.hero({ id: 'g1', source: 'steam', sourceId: '620', name: 'Portal 2' }, { steamRoot: root, steamCachedHero: scan.steamCachedHero });
+  assert.ok(f && fs.readFileSync(path.join(heroDir, f), 'utf8') === 'cachedhero');
+  assert.strictEqual(calls.length, 0);
+  // 2. Steam's servers for a Steam game not in the cache
+  c = new Covers({ fetch: fakeFetch([[/steamstatic\.com\/steam\/apps\/400\/library_hero\.jpg/, img]]), coverDir: heroDir, heroDir, imageSize: size(1920) });
+  f = await c.hero({ id: 'g2', source: 'steam', sourceId: '400', name: 'Portal' }, { steamRoot: root, steamCachedHero: scan.steamCachedHero });
+  assert.ok(f && f.startsWith('g2-') && fs.existsSync(path.join(heroDir, f)));
+  // too small to be wide art: refused
+  c = new Covers({ fetch: fakeFetch([[/library_hero/, img]]), coverDir: heroDir, heroDir, imageSize: size(460) });
+  assert.strictEqual(await c.hero({ id: 'g3', source: 'steam', sourceId: '401', name: 'X' }), null);
+  // 3. SteamGridDB by name for other games, only with a key
+  calls.length = 0;
+  c = new Covers({ fetch: fakeFetch([[/search\/autocomplete\/Celeste/, json([{ id: 77 }])], [/heroes\/game\/77/, json([{ url: 'https://cdn2.steamgriddb.com/hero/a.jpg' }])], [/cdn2\.steamgriddb\.com\/hero\/a\.jpg/, img]]), coverDir: heroDir, heroDir, imageSize: size(1920) });
+  assert.strictEqual(await c.hero({ id: 'g4', source: 'folder', name: 'Celeste' }, {}), null, 'no key, no SteamGridDB');
+  assert.strictEqual(calls.length, 0);
+  f = await c.hero({ id: 'g4', source: 'folder', name: 'Celeste' }, { key: 'k' });
+  assert.ok(f && f.startsWith('g4-'));
+  assert.ok(calls.some((u) => /heroes\/game\/77\?dimensions=/.test(u)));
+});
+
 /* ---------- Windows only: real system calls ---------- */
 
 test('winapi: running programs and starting one (Windows only)', async () => {

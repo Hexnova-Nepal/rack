@@ -25,7 +25,9 @@ The files aren't code-signed yet, so Windows SmartScreen may say "Windows protec
 - **Extra ways to start** a game (a mod manager or a config tool), plus desktop shortcuts and taskbar jump lists that count your time.
 - **Save backups** with [Ludusavi](https://github.com/mtkennerly/ludusavi), which Rack can download for you.
 - **Library backup** to a single `.rackbackup` file.
-- **Looks**: light, dark or system theme; four dark and three light backgrounds; seven accent colours or your own; five font styles.
+- **Themes**: eight ready-made looks (Rack, Nord, Dracula, Gruvbox, Catppuccin, Solarized, Synthwave, Forest), light, dark or system, with your own accent and font if you like.
+- **Wallpaper**: your pictures, your games' artwork, or both, changing on a timer or with the time of day, or following the game you're looking at.
+- **Drag and drop**: onto collections and lists, into your own order, Home rows you can arrange, and a desktop layout for Home.
 - **Uninstall** through each game's own uninstaller or store, with safety checks before anything is deleted.
 
 ## Build it yourself
@@ -65,11 +67,12 @@ When that version has no release yet, the workflow tests, builds, signs (once Si
 | `src/main/picker.js` | The Google Images cover picker window |
 | `src/main/uninstall.js` | Works out how to uninstall a game, with safety checks |
 | `src/main/backups.js` | Save backups through Ludusavi, and the library backup file |
+| `src/main/wallpaper.js` | Wallpaper pictures from your folders, served by id only |
 | `src/main/updates.js` | Updates from GitHub Releases |
 | `src/main/store.js` | The library file, `library.json`, in the data folder |
 | `src/main/vdf.js` | Reads Steam's .vdf and .acf files |
 | `src/preload.js` | The bridge between the interface and the main process |
-| `src/renderer/` | The interface: `app.js`, `styles.css`, fonts, and the rack figure in `vendor/` |
+| `src/renderer/` | The interface: `app.js`, `styles.css`, `themes.js`, fonts, and the rack figure in `vendor/` |
 | `test/run.js` | Unit tests, with small real .exe files in `test/fixtures/bin` |
 
 ## Data
@@ -87,6 +90,8 @@ Uninstalling Rack keeps your data. Rack sends nothing about you anywhere; [CODE_
 - A game started outside Rack is timed only while Rack is running in the tray.
 - The portable version doesn't update itself.
 - Save backups cover the games in Ludusavi's database, which is large but not complete.
+- Wallpaper art for games that aren't on Steam needs a SteamGridDB key; without one, those games show their blurred cover.
+- The Home desktop keeps each game in a grid cell. On a smaller window, games that don't fit move to the nearest free cell.
 - No controller mode yet.
 
 ## Licence
