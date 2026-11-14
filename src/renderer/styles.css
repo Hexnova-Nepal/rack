@@ -64,6 +64,16 @@ body > .titlebar, body > .app { position: relative; z-index: 1; }
 :root[data-wall="on"] .dock > * { background: color-mix(in srgb, var(--rail) 86%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
 @media (prefers-reduced-motion: reduce) { #wall .wl { transition: none; } }
 
+/* ---------- reduce effects (Settings › Appearance): for PCs where blur and fades cost too much ---------- */
+/* Blur behind a panel is worked out again for every frame the panel moves, so it is the first to go;
+   the panels become nearly solid instead. Fades and hover lifts stop; progress bars keep moving. */
+:root[data-effects="low"][data-wall="on"] .rail { background: color-mix(in srgb, var(--rail) 93%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-effects="low"][data-wall="on"] .panel { background: color-mix(in srgb, var(--raise) 95%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-effects="low"][data-wall="on"] .dock > * { background: color-mix(in srgb, var(--rail) 96%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-effects="low"] *, :root[data-effects="low"] *::before, :root[data-effects="low"] *::after { transition: none !important; }
+:root[data-effects="low"] .nowbar .dot { animation: none; }
+:root[data-effects="low"] .tile:hover .cover, :root[data-effects="low"] .dtile .hit:hover .cover { transform: none; }
+
 /* ---------- window ---------- */
 .titlebar { display: flex; align-items: center; gap: 12px; padding: 0 150px 0 16px; background: var(--rail); border-bottom: 1px solid var(--line); -webkit-app-region: drag; user-select: none; }
 .wordmark { font-family: 'Archivo', sans-serif; font-weight: 800; font-stretch: 125%; font-size: 13px; letter-spacing: .04em; }
@@ -258,7 +268,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; user-select: none;
 
 /* list view */
 .list { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
-.list th { text-align: left; font-weight: 500; color: var(--faint); font-size: 12px; padding: 0 10px 8px; position: sticky; top: 0; background: var(--bg); white-space: nowrap; }
+.list th { text-align: left; font-weight: 500; color: var(--faint); font-size: 12px; padding: 0 10px 8px; position: sticky; top: 0; z-index: 2; background: var(--bg); white-space: nowrap; }
 .list th button { background: none; border: 0; padding: 0; color: inherit; font: inherit; }
 .list th button[aria-sort] { color: var(--ink); }
 .list td { padding: 6px 10px; border-top: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
@@ -270,6 +280,7 @@ body.dragging, body.dragging * { cursor: grabbing !important; user-select: none;
 .list .thumb .cover { width: 28px; border-radius: 3px; }
 .list .thumb .cover .ph { font-size: 6px; padding: 2px; }
 .list .name { font-weight: 600; max-width: 380px; overflow: hidden; text-overflow: ellipsis; }
+.list .vpad td, .list .vpad tr:hover td { padding: 0; border: 0; background: none; }
 .list .rowplay { opacity: 0; }
 .list tr:hover .rowplay, .list tr:focus-within .rowplay { opacity: 1; }
 

@@ -306,6 +306,40 @@ test('covers: wide art from Steam’s cache, Steam’s servers, then SteamGridDB
 
 /* ---------- Windows only: real system calls ---------- */
 
+test('thumbs: a small copy per cover, made once, and covers that are used as they are', async () => {
+  const { Thumbs } = req('thumbs');
+  const coverDir = path.join(T, 'tcovers'), dir = path.join(T, 'tthumbs');
+  fs.mkdirSync(coverDir, { recursive: true });
+  for (const f of ['a.jpg', 'b.png', 'c.webp', 'small.jpg', 'broken.jpg']) fs.writeFileSync(path.join(coverDir, f), 'full ' + f);
+  const calls = [];
+  const th = new Thumbs({ coverDir, dir, resize: (file, width, kind) => {
+    calls.push([path.basename(file), width, kind]);
+    if (/small/.test(file)) return null;                 // already small: not worth a copy
+    if (/broken/.test(file)) throw new Error('bad picture');
+    return Buffer.from('small ' + kind);
+  } });
+  const a = await th.file('a.jpg');
+  assert.strictEqual(a, path.join(dir, 'a.jpg'));
+  assert.strictEqual(fs.readFileSync(a, 'utf8'), 'small jpeg');
+  assert.strictEqual(fs.readFileSync(await th.file('b.png'), 'utf8'), 'small png');
+  // asked again, and asked many times at once: made once
+  await Promise.all([th.file('a.jpg'), th.file('a.jpg'), th.file('b.png')]);
+  assert.deepStrictEqual(calls, [['a.jpg', 400, 'jpeg'], ['b.png', 400, 'png']]);
+  // kinds Rack can't shrink, small covers and broken ones are drawn from the cover itself, and not tried twice
+  assert.strictEqual(await th.file('c.webp'), path.join(coverDir, 'c.webp'));
+  assert.strictEqual(await th.file('small.jpg'), path.join(coverDir, 'small.jpg'));
+  assert.strictEqual(await th.file('broken.jpg'), path.join(coverDir, 'broken.jpg'));
+  await th.file('small.jpg'); await th.file('broken.jpg');
+  assert.strictEqual(calls.length, 4);
+  // a name can't reach outside the covers folder
+  assert.strictEqual(await th.file('../../library.json'), path.join(coverDir, 'library.json'));
+  assert.strictEqual(await th.file(''), null);
+  // a copy whose cover is gone is deleted
+  fs.unlinkSync(path.join(coverDir, 'a.jpg'));
+  assert.strictEqual(th.prune(), 1);
+  assert.deepStrictEqual(fs.readdirSync(dir), ['b.png']);
+});
+
 test('window: opens where a screen can show it', () => {
   const { placeOnScreen } = req('window');
   const one = [{ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }];

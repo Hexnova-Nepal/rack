@@ -22,6 +22,7 @@ const DEFAULT = {
     lightShade: 'cool',         // cool | paper | white
     font: 'rack',               // theme (the theme's own) | rack | clean | arcade | scifi | classic
     coverSize: 'm',             // s | m | l
+    effects: 'full',            // full | low: low turns off blur behind panels and fades, for slower PCs
     view: 'covers',             // covers | list
     sgdbKey: '',
     startWithWindows: false,
@@ -71,6 +72,7 @@ class Store {
     this.file = path.join(dir, 'library.json');
     this.coverDir = path.join(dir, 'covers');
     this.heroDir = path.join(dir, 'heroes'); // wide game art for the wallpaper
+    this.thumbDir = path.join(dir, 'thumbs'); // small copies of the covers, made when first shown
     fs.mkdirSync(this.coverDir, { recursive: true });
     fs.mkdirSync(this.heroDir, { recursive: true });
     this.data = this.load();

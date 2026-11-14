@@ -129,6 +129,7 @@ function applyAppearance() {
   root.dataset.theme = t.id;
   root.dataset.font = fontOf(s, t);
   root.dataset.size = s.coverSize || 'm';
+  root.dataset.effects = s.effects === 'low' ? 'low' : 'full';
   const key = s.accent || 'theme';
   const base = key === 'custom' ? hex(s.accentCustom) : key === 'theme' ? (t.id === 'rack' ? null : hex(t[mode].accent)) : hex(ACCENTS[key] || '');
   for (const k of ['--accent', '--accent-ink', '--accent-text', '--accent-soft']) root.style.removeProperty(k);
@@ -176,9 +177,16 @@ const visible = (g) => !g.hidden && !g.notInstalled;
 function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 
 const coverUrl = (g) => (g && g.cover ? `${window.RACK_COVER_BASE || 'rack://cover/'}${encodeURIComponent(g.cover)}` : '');
-function coverHTML(g, { src = true, state = true } = {}) {
+// Covers are kept at full size (up to 1200 × 1800), far more than a tile shows. Rack draws a
+// 400 px wide copy instead, which takes a fraction of the memory; only a large cover on a very
+// dense screen gets the full picture.
+const thumbUrl = (g) => (g && g.cover ? `${window.RACK_THUMB_BASE || 'rack://thumb/'}${encodeURIComponent(g.cover)}` : '');
+const artUrl = (g, w) => (w * (window.devicePixelRatio || 1) > 440 ? coverUrl(g) : thumbUrl(g));
+/** How wide a tile's cover can get, in CSS pixels, at the current cover size. */
+const tileW = () => ({ s: 142, m: 180, l: 236 })[(S && S.settings.coverSize) || 'm'] || 180;
+function coverHTML(g, { src = true, state = true, w = tileW() } = {}) {
   const art = g.cover
-    ? `<img src="${coverUrl(g)}" alt="" loading="lazy" draggable="false">`
+    ? `<img src="${artUrl(g, w)}" alt="" loading="lazy" decoding="async" draggable="false">`
     : `<div class="ph" style="background:linear-gradient(160deg,hsl(${hue(g.name)} 26% 34%),hsl(${(hue(g.name) + 40) % 360} 30% 18%))">${esc(g.name)}</div>`;
   const st = !state ? '' : g.missing ? '<span class="state">Missing</span>' : isRunning(g) ? '<span class="state go">Playing</span>'
     : isLaunching(g) ? '<span class="state">Starting</span>' : isUninstalling(g) ? '<span class="state">Uninstalling</span>' : g.notInstalled ? '<span class="state">Not installed</span>' : '';
@@ -267,12 +275,16 @@ async function pinToggle(ids, on) {
   return call(R.setSettings({ rackPins: [...bySlot, ...extra] }), added === 1 ? `${all.find((g) => bySlot.includes(g.id)).name} stays on the rack now` : `${added} games stay on the rack now`);
 }
 
+// one collator for every comparison of names: localeCompare with options builds a new one per call,
+// which made sorting 2,000 games by name take most of a second
+const NAMES = new Intl.Collator(undefined, { numeric: true });
+const byName = (a, b) => NAMES.compare(a.name, b.name);
 const SORTS = {
-  lastPlayed: (a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || a.name.localeCompare(b.name),
-  name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }),
-  total: (a, b) => b.total - a.total || a.name.localeCompare(b.name),
+  lastPlayed: (a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0) || byName(a, b),
+  name: byName,
+  total: (a, b) => b.total - a.total || byName(a, b),
   added: (a, b) => b.added - a.added,
-  year: (a, b) => (b.year || 0) - (a.year || 0) || a.name.localeCompare(b.name),
+  year: (a, b) => (b.year || 0) - (a.year || 0) || byName(a, b),
 };
 const sortGames = (list, how) => [...list].sort(SORTS[how] || SORTS.name);
 
@@ -281,7 +293,7 @@ const storedOrder = (col) => (col ? col.order : S.settings.order) || [];
 function customSorted(list, col) {
   const at = new Map(storedOrder(col).map((id, i) => [id, i]));
   const pos = (g) => (at.has(g.id) ? at.get(g.id) : Infinity);
-  return [...list].sort((a, b) => pos(a) - pos(b) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return [...list].sort((a, b) => pos(a) - pos(b) || byName(a, b));
 }
 /** Puts `shown` (ids in the order you see them) into `order`, in the places those ids already hold. */
 function refill(order, shown) {
@@ -400,7 +412,7 @@ let FIG = null, rackEl = null, rackHandle = null, rackRest = -2, rackSlot = -1, 
 // front, is where the whole cover shows, so list position k sits in cartridge n - 1 - k.
 const rackN = () => Math.max(3, Math.min(12, Math.round(Number(S && S.settings.rackCount) || 7)));
 const cartOf = (k) => (k >= 0 ? rackN() - 1 - k : -1);
-const rackCovers = () => { if (rackHandle && rackHandle.covers) rackHandle.covers(Array.from({ length: rackN() }, (_, c) => coverUrl(rackList[cartOf(c)]))); };
+const rackCovers = () => { if (rackHandle && rackHandle.covers) rackHandle.covers(Array.from({ length: rackN() }, (_, c) => thumbUrl(rackList[cartOf(c)]))); };
 window.hairline = (fig) => { FIG = fig; };
 const figReady = import('./vendor/cartridges.js');
 
@@ -493,7 +505,7 @@ function renderHeroInfo() {
   if (!g) return;
   info.innerHTML = heroInfoHTML(g);
   fitTitle(info.querySelector('h1'));
-  cov.innerHTML = coverHTML(g, { src: false });
+  cov.innerHTML = coverHTML(g, { src: false, w: 196 });
   cov.dataset.gid = g.id;
   if (cap) { cap.textContent = ui.preview ? `${g.name}, ${hours(g.total)}` : ''; cap.parentElement.classList.toggle('named', !!ui.preview); }
 }
@@ -517,7 +529,7 @@ function renderHome() {
     <div id="hero-cover"></div>
     <div id="hero-info"></div>
     <div class="rackwrap"><div id="rackslot" data-rest="${rest}"></div>
-      <div class="thumbs">${rackList.map((g, i) => (g ? `<button class="${isPinned(g.id) ? 'pinned' : ''}" data-act="feature" data-id="${g.id}" data-gid="${g.id}" data-slot="${i}" title="${esc(g.name)}${isPinned(g.id) ? ' · kept on the rack' : ''}" aria-label="Feature ${esc(g.name)}">${coverHTML(g, { src: false, state: false })}</button>` : `<span class="thumbgap" data-slot="${i}"></span>`)).join('')}</div>
+      <div class="thumbs">${rackList.map((g, i) => (g ? `<button class="${isPinned(g.id) ? 'pinned' : ''}" data-act="feature" data-id="${g.id}" data-gid="${g.id}" data-slot="${i}" title="${esc(g.name)}${isPinned(g.id) ? ' · kept on the rack' : ''}" aria-label="Feature ${esc(g.name)}">${coverHTML(g, { src: false, state: false, w: 40 })}</button>` : `<span class="thumbgap" data-slot="${i}"></span>`)).join('')}</div>
       <div class="rackcap"><span title="Your most played. Point at one to preview it, click to feature it, or drag a game onto one to keep it there.">Your most played. Drag a game onto a cartridge to keep it there.</span><strong id="rack-name"></strong></div></div>
   </section>
   ${homeRows().filter((r) => r.on).map(shelfHTML).join('')}<div style="height:24px"></div>`;
@@ -629,7 +641,7 @@ function renderDesktop() {
   return `<div class="deskbar"><h1 class="title">Home</h1><span class="muted">Drag games anywhere. Drop games on Home in the sidebar, or right-click them, to add more.</span><span class="spacer"></span>
     <button class="btn small" data-act="deskTidy">${ic('grid')}Tidy up</button><button class="btn small ghost" data-act="homeLayout" data-v="shelves">Back to shelves</button></div>
     <div id="desk" class="desk" style="--cell-w:${CELL_W}px;--cell-h:${CELL_H}px;--desk-pad:${DESK_PAD}px;min-height:${(Math.max(deskRows(), ...items.map((x) => x.r + 1)) * CELL_H) + 20}px">
-      ${items.map(({ g, c, r }) => `<div class="dtile" data-gid="${g.id}" style="--c:${c};--r:${r}"><button class="hit" data-act="open" data-id="${g.id}" data-fk="d:${g.id}" aria-label="${esc(g.name)}">${coverHTML(g, { src: false })}</button><p title="${esc(g.name)}">${esc(g.name)}</p></div>`).join('')}
+      ${items.map(({ g, c, r }) => `<div class="dtile" data-gid="${g.id}" style="--c:${c};--r:${r}"><button class="hit" data-act="open" data-id="${g.id}" data-fk="d:${g.id}" aria-label="${esc(g.name)}">${coverHTML(g, { src: false, w: 120 })}</button><p title="${esc(g.name)}">${esc(g.name)}</p></div>`).join('')}
       ${items.length ? '' : '<p class="muted deskempty">Your desktop is empty. Drag games from any list onto Home in the sidebar.</p>'}
     </div>`;
 }
@@ -681,7 +693,7 @@ function renderGames() {
   if (view === 'list') {
     const k = ui.listSort.key, d = ui.listSort.dir;
     const val = { name: (g) => g.name.toLowerCase(), source: (g) => sourceLabel(g), status: (g) => STATUS_LABEL[g.status || ''], total: (g) => g.total, lastPlayed: (g) => g.lastPlayed || 0, added: (g) => g.added };
-    list = [...list].sort((x, y) => { const a = val[k](x), c = val[k](y); return (a < c ? -1 : a > c ? 1 : 0) * d || x.name.localeCompare(y.name); });
+    list = [...list].sort((x, y) => { const a = val[k](x), c = val[k](y); return (a < c ? -1 : a > c ? 1 : 0) * d || byName(x, y); });
   }
   const sources = [...new Set(all.map((g) => g.source))];
   const genres = [...new Set(all.flatMap((g) => g.genres || []))].sort();
@@ -692,6 +704,7 @@ function renderGames() {
         : list.length !== all.length ? ['No games match these filters', 'Clear a filter to see more.'] : ['No games here', 'Scan for games to fill your library.'];
   const subOf = (g) => `<small class="num">${sort === 'added' ? `Added ${esc(ago(g.added, true))}` : sort === 'total' ? hours(g.total) : sort === 'year' ? (g.year || '') : g.status ? esc(STATUS_LABEL[g.status]) : esc(ago(g.lastPlayed, true))}</small>`;
   const th = (key, label) => `<th><button data-act="listSort" data-key="${key}" ${ui.listSort.key === key ? `aria-sort="${ui.listSort.dir > 0 ? 'ascending' : 'descending'}"` : ''}>${label}${ui.listSort.key === key ? (ui.listSort.dir > 0 ? ' ↑' : ' ↓') : ''}</button></th>`;
+  vgSet(list, view === 'list' ? listRow : (g) => tile(g, subOf(g)));
   const fsel = (key, label, opts) => `<select data-act="filter" data-key="${key}" aria-label="${label}"><option value="">${label}: all</option>${opts.map(([v, l]) => `<option value="${esc(v)}" ${ui.f[key] === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   return `<div class="page">
     <div class="gridhead"><h1 class="title">${esc(b.title)}</h1><span class="num">${list.length}${list.length !== all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'game' : 'games'}</span>${extra}</div>
@@ -707,24 +720,120 @@ function renderGames() {
     </div>
     ${!list.length ? `<div class="empty" style="padding-left:0"><h2 class="title">${empty[0]}</h2><p>${empty[1]}</p></div>`
       : view === 'list'
-        ? `<table class="list"><thead><tr><th></th>${th('name', 'Name')}${th('source', 'Source')}${th('status', 'Status')}${th('total', 'Time played')}${th('lastPlayed', 'Last played')}${th('added', 'Added')}<th></th></tr></thead><tbody>
-            ${list.map((g) => `<tr class="lrow${ui.sel.has(g.id) ? ' sel' : ''}" tabindex="0" data-gid="${g.id}" data-act="open" data-id="${g.id}" data-fk="r:${g.id}">
-              <td class="thumb">${coverHTML(g, { src: false, state: false })}</td><td class="name" title="${esc(g.name)}">${esc(g.name)}${g.notInstalled ? ' <span class="tag">Not installed</span>' : g.missing ? ' <span class="tag warn">Missing</span>' : isRunning(g) ? ' <span class="tag acc">Playing</span>' : ''}</td>
-              <td>${esc(sourceLabel(g))}</td><td>${g.status ? esc(STATUS_LABEL[g.status]) : ''}</td><td class="num">${g.total ? hours(g.total) : ''}</td><td>${g.lastPlayed ? esc(ago(g.lastPlayed, true)) : ''}</td><td>${esc(ago(g.added, true))}</td>
-              <td>${g.missing ? '' : `<button class="btn small ghost rowplay" data-act="play" data-id="${g.id}" tabindex="-1">${ic(g.notInstalled ? 'down' : 'play')}${g.notInstalled ? 'Install' : 'Play'}</button>`}</td></tr>`).join('')}
-          </tbody></table>`
-        : `<div class="grid">${list.map((g) => tile(g, subOf(g))).join('')}</div>`}
+        ? `<table class="list"><thead><tr><th></th>${th('name', 'Name')}${th('source', 'Source')}${th('status', 'Status')}${th('total', 'Time played')}${th('lastPlayed', 'Last played')}${th('added', 'Added')}<th></th></tr></thead>
+            <tbody class="vpad" id="vtop"><tr><td colspan="8"></td></tr></tbody><tbody id="vrows"></tbody><tbody class="vpad" id="vbot"><tr><td colspan="8"></td></tr></tbody></table>`
+        : '<div class="grid" id="vgrid"></div>'}
     <p class="note" style="margin-top:22px">Arrow keys move between games, Enter plays, Space opens details. Ctrl or Shift + click selects several. Right-click for more.</p>
   </div>`;
 }
 
+const listRow = (g) => `<tr class="lrow${ui.sel.has(g.id) ? ' sel' : ''}" tabindex="0" data-gid="${g.id}" data-act="open" data-id="${g.id}" data-fk="r:${g.id}">
+  <td class="thumb">${coverHTML(g, { src: false, state: false, w: 40 })}</td><td class="name" title="${esc(g.name)}">${esc(g.name)}${g.notInstalled ? ' <span class="tag">Not installed</span>' : g.missing ? ' <span class="tag warn">Missing</span>' : isRunning(g) ? ' <span class="tag acc">Playing</span>' : ''}</td>
+  <td>${esc(sourceLabel(g))}</td><td>${g.status ? esc(STATUS_LABEL[g.status]) : ''}</td><td class="num">${g.total ? hours(g.total) : ''}</td><td>${g.lastPlayed ? esc(ago(g.lastPlayed, true)) : ''}</td><td>${esc(ago(g.added, true))}</td>
+  <td>${g.missing ? '' : `<button class="btn small ghost rowplay" data-act="play" data-id="${g.id}" tabindex="-1">${ic(g.notInstalled ? 'down' : 'play')}${g.notInstalled ? 'Install' : 'Play'}</button>`}</td></tr>`;
+
 function renderSearch() {
   const q = $('#search').value.trim().toLowerCase();
   const list = sortGames(S.games.filter((g) => !g.hidden && (g.name.toLowerCase().includes(q) || (g.platform || '').toLowerCase() === q || (g.genres || []).some((x) => x.toLowerCase() === q) || (g.developer || '').toLowerCase().includes(q))), 'name');
+  vgSet(list, (g) => tile(g, `<small>${esc(sourceLabel(g))}${g.year ? ` · ${g.year}` : ''}</small>`));
   return `<div class="page"><div class="gridhead"><h1 class="title">Results for “${esc($('#search').value.trim())}”</h1><span>${list.length} ${list.length === 1 ? 'game' : 'games'}</span></div>
-    ${list.length ? `<div class="grid">${list.map((g) => tile(g, `<small>${esc(sourceLabel(g))}${g.year ? ` · ${g.year}` : ''}</small>`)).join('')}</div>`
+    ${list.length ? '<div class="grid" id="vgrid"></div>'
       : '<div class="empty" style="padding-left:0"><h2 class="title">No games match</h2><p>Check the spelling, or scan for games if it isn’t in your library yet.</p></div>'}</div>`;
 }
+
+/* ---------- big lists: only the games on screen are in the page ---------- */
+// A grid or list of thousands of games would put tens of thousands of elements in the page and
+// rebuild them on every change. Instead the box keeps its full height with padding, and holds
+// only the rows in view plus a few either side; scrolling swaps rows in and out.
+
+const vg = { list: [], item: null, box: null, anchor: null, kind: 'grid', a: 0, b: 0, cols: 1, rowH: 0, lost: null, tick: 0 };
+const vgSet = (list, item) => { vg.list = list; vg.item = item; };
+const vgOn = () => !!(vg.box && vg.box.isConnected);
+
+/** Finds the box in the freshly drawn page, measures one item, and draws the rows in view. */
+function vgMount() {
+  const box = $('#vgrid') || $('#vrows');
+  Object.assign(vg, { box, a: 0, b: 0, cols: 1, rowH: 0, lost: null });
+  if (!box) { vg.list = []; return; }
+  vg.kind = box.id === 'vgrid' ? 'grid' : 'rows';
+  vg.anchor = vg.kind === 'grid' ? box : $('#vtop');
+  vgMeasure();
+  vgUpdate(true);
+}
+/** Columns and row height, from the layout the stylesheet gives. True when either changed. */
+function vgMeasure() {
+  const box = vg.box, fill = (k) => { box.innerHTML = vg.list.slice(0, k).map(vg.item).join(''); };
+  if (!box.firstElementChild) fill(1);
+  if (!box.firstElementChild) return false;
+  const cs = getComputedStyle(box);
+  const cols = vg.kind === 'grid' ? Math.max(1, cs.gridTemplateColumns.split(' ').length) : 1;
+  // the distance between rows, taken across several: one row alone can be a fraction of a pixel
+  // off, and over two thousand rows that adds up to a screenful
+  const want = Math.min(vg.list.length, vg.kind === 'grid' ? cols * 3 + 1 : 16);
+  if (box.children.length < want && !vg.b) fill(want);
+  const kids = box.children, first = kids[0].getBoundingClientRect();
+  const span = Math.floor((kids.length - 1) / cols);
+  const rowH = span > 0 ? (kids[span * cols].getBoundingClientRect().top - first.top) / span
+    : first.height + (vg.kind === 'grid' ? parseFloat(cs.rowGap) || 0 : 0);
+  const same = cols === vg.cols && Math.abs(rowH - vg.rowH) < 0.02;
+  vg.cols = cols; vg.rowH = rowH;
+  return !same;
+}
+/** Where the first row starts inside the scrolling view. */
+const vgTop = () => { const view = $('#view'); return vg.anchor.getBoundingClientRect().top - view.getBoundingClientRect().top + view.scrollTop + (vg.kind === 'grid' ? 4 : 0); };
+function vgPad(before, after) {
+  if (vg.kind === 'grid') { vg.box.style.paddingTop = `${4 + before}px`; vg.box.style.paddingBottom = `${4 + after}px`; return; }
+  $('#vtop td').style.height = `${before}px`; $('#vbot td').style.height = `${after}px`;
+}
+/** Draws the rows in view. Rows that stay are left alone, so pictures don't reload and a drag keeps its target. */
+function vgUpdate(force = false) {
+  if (!vgOn() || !vg.rowH) return;
+  const view = $('#view'), box = vg.box, n = vg.list.length, cols = vg.cols, rows = Math.ceil(n / cols);
+  const top = vgTop(), over = vg.kind === 'grid' ? 2 : 10;
+  const r0 = Math.max(0, Math.min(rows, Math.floor((view.scrollTop - top) / vg.rowH) - over));
+  const r1 = Math.max(r0, Math.min(rows, Math.ceil((view.scrollTop + view.clientHeight - top) / vg.rowH) + over));
+  const a = r0 * cols, b = Math.min(n, r1 * cols);
+  if (!force && a === vg.a && b === vg.b) return;
+  const html = (from, to) => vg.list.slice(from, to).map(vg.item).join('');
+  const held = box.contains(document.activeElement) ? document.activeElement.closest('[data-fk]') : null;
+  if (!force && a < vg.b && b > vg.a) {
+    for (let i = vg.a; i < a; i++) box.firstElementChild.remove();
+    for (let i = b; i < vg.b; i++) box.lastElementChild.remove();
+    if (a < vg.a) box.insertAdjacentHTML('afterbegin', html(a, vg.a));
+    if (b > vg.b) box.insertAdjacentHTML('beforeend', html(vg.b, b));
+  } else box.innerHTML = html(a, b);
+  vgPad(r0 * vg.rowH, (rows - r1) * vg.rowH);
+  vg.a = a; vg.b = b;
+  // the game with the keyboard focus scrolled out of the page: remember it, so the arrow keys carry on from there
+  if (held && !held.isConnected) vg.lost = held.dataset.id;
+}
+/** Scrolls item j into view, draws it, and returns its focusable element. */
+function vgReveal(j) {
+  const view = $('#view'), top = vgTop() + Math.floor(j / vg.cols) * vg.rowH, head = vg.kind === 'rows' ? 36 : 10;
+  if (top < view.scrollTop + head) view.scrollTop = top - head;
+  else if (top + vg.rowH > view.scrollTop + view.clientHeight) view.scrollTop = top + vg.rowH - view.clientHeight + 10;
+  vgUpdate();
+  return vg.box.querySelector(`[data-fk="${vg.kind === 'rows' ? 'r' : 't'}:${CSS.escape(vg.list[j].id)}"]`);
+}
+/** Arrow keys in a virtual box move by position in the list, so they reach games that aren't drawn yet. */
+function vgMove(id, key) {
+  const n = vg.list.length, cols = vg.cols, i = vg.list.findIndex((g) => g.id === id);
+  if (i < 0) return false;
+  let j = -1;
+  if (vg.kind === 'rows') j = key === 'ArrowDown' ? i + 1 : key === 'ArrowUp' ? i - 1 : -1;
+  else if (key === 'ArrowRight') j = i + 1;
+  else if (key === 'ArrowLeft') j = i - 1;
+  else if (key === 'ArrowUp') j = i - cols;
+  else { j = i + cols; if (j >= n && Math.floor(i / cols) < Math.floor((n - 1) / cols)) j = n - 1; } // down from above a short last row
+  if (j < 0 || j >= n) return false;
+  const el = vgReveal(j);
+  if (el) el.focus({ preventScroll: true });
+  return !!el;
+}
+$('#view').addEventListener('scroll', () => { if (!vg.tick) vg.tick = requestAnimationFrame(() => { vg.tick = 0; vgUpdate(); }); }, { passive: true });
+// the window, the sidebar or the dock changed size: the columns may have changed
+new ResizeObserver(() => { if (vgOn()) vgUpdate(vgMeasure()); }).observe($('#view'));
+document.addEventListener('focusin', () => { vg.lost = null; });
 
 /* ---------- details ---------- */
 
@@ -812,7 +921,7 @@ function renderDetail() {
         <div class="panel"><h2 class="title">Cover</h2>
           <p>${S.settings.sgdbKey ? (d.loading ? `Looking for covers of “${esc(g.name)}” on SteamGridDB…` : d.matchError ? esc(d.matchError) : d.matches && d.matches.length ? `${d.matches.length} matches from SteamGridDB. Click one to use it.` : 'SteamGridDB found nothing under this name. Try renaming the game, or search Google.')
             : 'Add a free SteamGridDB key in Settings to see cover choices here.'}</p>
-          <div class="picker"><div class="sel" style="position:relative">${coverHTML(g, { src: false, state: false })}<small>In use</small></div>${matches}</div>
+          <div class="picker"><div class="sel" style="position:relative">${coverHTML(g, { src: false, state: false, w: 160 })}<small>In use</small></div>${matches}</div>
           <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
             <button class="btn" data-act="coverSearch" data-id="${g.id}">${ic('img')}Find a cover on Google</button>
             <button class="btn" data-act="coverFile" data-id="${g.id}">${ic('folder')}Use an image file</button>
@@ -1112,6 +1221,7 @@ function renderSettings() {
           <div class="field"><span>Dark background</span><div class="shades">${DARK_SHADES.map(([k, l, c]) => `<button class="shade" aria-pressed="${s.darkShade === k}" data-act="setShade" data-key="darkShade" data-v="${k}"><i style="background:${c}"></i><span>${l}</span></button>`).join('')}</div></div>
           <div class="field"><span>Light background</span><div class="shades">${LIGHT_SHADES.map(([k, l, c]) => `<button class="shade" aria-pressed="${s.lightShade === k}" data-act="setShade" data-key="lightShade" data-v="${k}"><i style="background:${c}"></i><span>${l}</span></button>`).join('')}</div></div>
         </div>` : ''}
+        <div class="srow"><b>Reduce effects</b><button class="toggle" role="switch" aria-label="Reduce effects" aria-checked="${s.effects === 'low'}" data-act="effects"></button><small>No blur behind panels and no fades. Turn it on if Rack feels slow on this PC.</small></div>
         <div class="field"><span>Font</span><div class="fonts">${th.id === 'rack' ? '' : `<button class="fontopt" aria-pressed="${!s.font || s.font === 'theme'}" data-act="setFont" data-v="theme" data-font-preview="${th.font}"><b class="title">${esc(th.name)}</b><span>The theme’s own: ${esc((FONTS.find((f) => f[0] === th.font) || FONTS[0])[1])}</span></button>`}${FONTS.map(([k, l, d]) => `<button class="fontopt" aria-pressed="${s.font === k || th.id === 'rack' && k === 'rack' && (!s.font || s.font === 'theme')}" data-act="setFont" data-v="${k}" data-font-preview="${k}"><b class="title">${l}</b><span>${d}</span></button>`).join('')}</div></div>
       </div>
       ${wallPanel()}
@@ -1172,7 +1282,7 @@ function renderDock() {
   for (const r of run) {
     const g = byId(r.id);
     if (!g) continue;
-    html += `<div class="nowbar" data-gid="${g.id}"><span class="dot" aria-hidden="true"></span>${coverHTML(g, { src: false, state: false })}<span>Playing <strong>${esc(g.name)}</strong></span>
+    html += `<div class="nowbar" data-gid="${g.id}"><span class="dot" aria-hidden="true"></span>${coverHTML(g, { src: false, state: false, w: 40 })}<span>Playing <strong>${esc(g.name)}</strong></span>
       <span class="muted num" data-since="${r.start}">${clock(Date.now() - r.start)}</span><span class="spacer"></span>
       <button class="btn small ghost" data-act="stopTiming" data-id="${g.id}" title="Use this if the game has closed but Rack still counts">${ic('stop')}Stop timing</button></div>`;
   }
@@ -1222,7 +1332,7 @@ function artPool() {
   const games = S.games.filter(visible);
   const heroes = games.filter((g) => g.hero).map((g) => ({ url: heroUrl(g) }));
   // until wide art arrives, the covers stand in, blurred much more
-  return heroes.length ? heroes : games.filter((g) => g.cover).map((g) => ({ url: coverUrl(g), soft: true }));
+  return heroes.length ? heroes : games.filter((g) => g.cover).map((g) => ({ url: thumbUrl(g), soft: true }));
 }
 function wallPool(w) {
   const lists = wall.lists || {};
@@ -1242,7 +1352,7 @@ function wallTarget() {
     const g = byId(ui.point) || (ui.view === 'home' ? byId(ui.preview) || featured() : ui.view === 'detail' ? byId(ui.detail.id) : null);
     if (g && (g.hero || g.cover)) {
       if (!g.hero) askArt([g.id]);
-      const url = heroUrl(g) || coverUrl(g);
+      const url = heroUrl(g) || thumbUrl(g);
       if (!wall.bad.has(url)) return { url, soft: !g.hero };
     }
   }
@@ -1329,9 +1439,14 @@ function render() {
   const fkEl = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[data-fk]') : null;
   const focusKey = fkEl && fkEl.dataset.fk;
   if (rackEl && rackEl.parentNode) rackEl.remove();
+  const lost = vg.lost;
+  vgSet([], null);
   view.innerHTML = { home: renderHome, games: renderGames, detail: renderDetail, scan: renderScan, settings: renderSettings, search: renderSearch, found: renderFound, setup: renderSetup }[ui.view]();
   view.dataset.view = ui.view + (ui.arg || '');
+  vgMount();               // gives the box its full height, so the scroll position can be put back
   view.scrollTop = keepScroll;
+  vgUpdate();
+  if (same) vg.lost = lost;
   for (const [id, top] of inner) { const el = document.getElementById(id); if (el) el.scrollTop = top; }
   if (focusKey) { const el = view.querySelector(`[data-fk="${CSS.escape(focusKey)}"]`); if (el) el.focus({ preventScroll: true }); }
   if (ui.view === 'home') afterHome();
@@ -1353,7 +1468,8 @@ function go(view, arg = null) {
 
 /* ---------- selection ---------- */
 
-function visibleIds() { return [...document.querySelectorAll('#view [data-gid].tile, #view tr.lrow[data-gid]')].map((el) => el.dataset.gid); }
+/** The games of the current grid or list, in the order shown (all of them, not only the ones drawn). */
+function visibleIds() { return vgOn() ? vg.list.map((g) => g.id) : [...document.querySelectorAll('#view [data-gid].tile, #view tr.lrow[data-gid]')].map((el) => el.dataset.gid); }
 function selectClick(id, e) {
   const ids = visibleIds();
   if (e.shiftKey && ui.anchor && ids.includes(ui.anchor)) {
@@ -1551,6 +1667,7 @@ const ACT = {
   setAccent: (el) => call(R.setSettings({ accent: el.dataset.v })),
   setShade: (el) => call(R.setSettings({ [el.dataset.key]: el.dataset.v })),
   setFont: (el) => call(R.setSettings({ font: el.dataset.v })),
+  effects: () => call(R.setSettings({ effects: S.settings.effects === 'low' ? 'full' : 'low' })),
   wallSource: (el) => setWall({ source: el.dataset.v }),
   hideRow: (el) => { const rows = homeRows(); const r = rows.find((x) => x.id === el.dataset.row); if (r) { r.on = false; saveRows(rows); toast(`Hid ${rowName(r.id)}. Bring it back in Settings › Home.`); } },
   rowToggle: (el) => { const rows = homeRows(); const r = rows.find((x) => x.id === el.dataset.row); if (r) { r.on = !r.on; saveRows(rows); } },
@@ -1655,6 +1772,7 @@ document.addEventListener('input', (e) => {
 function moveFocus(from, key) {
   const box = from.closest('.grid, .row, tbody');
   if (!box) return false;
+  if (box === vg.box) return vgMove(from.dataset.id, key);
   const items = [...box.querySelectorAll('[data-fk]')];
   const i = items.indexOf(from);
   if (i < 0) return false;
@@ -1682,6 +1800,13 @@ document.addEventListener('keydown', (e) => {
   const typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && !typing && (ui.view === 'games' || ui.view === 'search')) { e.preventDefault(); for (const id of visibleIds()) ui.sel.add(id); syncSelection(); return; }
   const fk = a && a.closest && a.closest('[data-fk]');
+  // the focused game was scrolled out of the page: an arrow key goes back to it
+  if (!fk && !typing && vg.lost && vgOn() && e.key.startsWith('Arrow')) {
+    const j = vg.list.findIndex((g) => g.id === vg.lost);
+    const el = j >= 0 ? vgReveal(j) : null;
+    if (el) { e.preventDefault(); el.focus({ preventScroll: true }); }
+    return;
+  }
   if (!fk || typing) return;
   if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && ui.view === 'games' && fk.closest('.grid')) {
     e.preventDefault();
@@ -1748,7 +1873,7 @@ function beginDrag(st) {
   el.className = 'dragghost' + (st.kind === 'desk' ? ' big' : '');
   el.innerHTML = st.kind === 'row'
     ? `<span class="gname">${ic('grip')}${esc(rowName(st.row))}</span>`
-    : `${coverHTML(g, { src: false, state: false })}<span class="gname">${esc(g.name)}</span>${drag.ids.length > 1 ? `<b class="badge">${drag.ids.length}</b>` : ''}`;
+    : `${coverHTML(g, { src: false, state: false, w: 60 })}<span class="gname">${esc(g.name)}</span>${drag.ids.length > 1 ? `<b class="badge">${drag.ids.length}</b>` : ''}`;
   document.body.appendChild(el);
   drag.ghost = el;
   document.body.classList.add('dragging');

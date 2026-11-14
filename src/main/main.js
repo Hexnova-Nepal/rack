@@ -17,6 +17,7 @@ const { Pictures, SLOTS } = require('./wallpaper');
 const pictures = new Pictures();
 const { Updates } = require('./updates');
 const { placeOnScreen } = require('./window');
+const { Thumbs } = require('./thumbs');
 
 const APP_ID = 'app.rack.launcher';
 const PORTABLE = !!process.env.PORTABLE_EXECUTABLE_DIR;
@@ -28,7 +29,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'rack', privileges: { standard: 
 if (!app.requestSingleInstanceLock()) { app.quit(); return; }
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 
-let win = null, tray = null, store, covers, tracker, updates, ludusavi, steamRootPath = null;
+let win = null, tray = null, store, covers, thumbs, tracker, updates, ludusavi, steamRootPath = null;
 let quitting = false, closedForPlay = false, pendingView = null;
 let storeScan = {};                // source -> games, from the last full store scan
 const folderResults = new Map();   // folder id -> candidates
@@ -1105,6 +1106,17 @@ app.whenReady().then(async () => {
     fetch: (u, o) => net.fetch(u, o), coverDir: store.coverDir, heroDir: store.heroDir,
     imageSize: (buf) => { try { const i = nativeImage.createFromBuffer(buf); return i.isEmpty() ? null : i.getSize(); } catch { return null; } },
   });
+  // small copies of covers for tiles: only a cover clearly bigger than the copy is worth shrinking
+  thumbs = new Thumbs({
+    coverDir: store.coverDir, dir: store.thumbDir,
+    resize: (file, width, kind) => {
+      const img = nativeImage.createFromPath(file);
+      if (img.isEmpty() || img.getSize().width < width * 1.3) return null;
+      const small = img.resize({ width, quality: 'best' });
+      return kind === 'png' ? small.toPNG() : small.toJPEG(86);
+    },
+  });
+  setTimeout(() => thumbs.prune(), 20000);
   ludusavi = new backups.Ludusavi({ toolsDir: path.join(app.getPath('userData'), 'tools'), fetch: (u, o) => net.fetch(u, o), getPath: () => store.data.settings.ludusaviPath });
   tracker = new launcher.Tracker({
     games: () => store.data.games,
@@ -1115,12 +1127,16 @@ app.whenReady().then(async () => {
   });
   updates = new Updates({ app, portable: PORTABLE, fetch: (u, o) => net.fetch(u, o), onChange: () => push() });
 
-  // rack://cover/<file> and rack://hero/<file> serve Rack's own pictures; rack://wall/<id> serves
-  // only pictures Rack listed from your wallpaper folders
-  protocol.handle('rack', (req) => {
+  // rack://cover/<file> and rack://hero/<file> serve Rack's own pictures; rack://thumb/<file> the
+  // small copy of a cover; rack://wall/<id> serves only pictures Rack listed from your wallpaper folders
+  protocol.handle('rack', async (req) => {
     const u = new URL(req.url);
     const name = path.basename(decodeURIComponent(u.pathname));
     if (u.host === 'cover' || u.host === 'hero') return net.fetch(pathToFileURL(path.join(u.host === 'cover' ? store.coverDir : store.heroDir, name)).toString());
+    if (u.host === 'thumb') {
+      const f = await thumbs.file(name);
+      return f ? net.fetch(pathToFileURL(f).toString()) : new Response('', { status: 404 });
+    }
     if (u.host === 'wall') {
       const f = pictures.file(name);
       return f ? net.fetch(pathToFileURL(f).toString()) : new Response('', { status: 404 });
