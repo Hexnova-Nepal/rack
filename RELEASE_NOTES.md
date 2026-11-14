@@ -1,3 +1,13 @@
+## What's new in Rack 1.2.1
+
+**Fixed: Rack's shortcut did nothing while Rack was in the tray.** If you closed Rack's window (it keeps running near the clock to time your games) and then started Rack again from its desktop icon or the Start menu, the window either didn't come up or only flashed on the taskbar. Windows was refusing to let the window come to the front. Rack's shortcut now always brings the window back, in front of whatever else is open. The same goes when Rack is minimised or behind another window.
+
+**Fixed: the window could open where you can't see it.** If Rack was last used on a second monitor that has since been unplugged or moved, it now opens on a screen you have.
+
+Under the hood: the Windows build now tests all of this on every change, by starting Rack a second time with another window in front.
+
+---
+
 ## What's new in Rack 1.2
 
 **Themes.** Eight ready-made looks that recolour the whole app and bring their own font: Rack, Nord, Dracula, Gruvbox, Catppuccin, Solarized, Synthwave and Forest. Most come in dark and light; Dracula and Synthwave are dark only. You can still change the accent colour and font after picking one, and the window's title bar follows the theme.

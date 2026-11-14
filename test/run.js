@@ -306,6 +306,36 @@ test('covers: wide art from Steam’s cache, Steam’s servers, then SteamGridDB
 
 /* ---------- Windows only: real system calls ---------- */
 
+test('window: opens where a screen can show it', () => {
+  const { placeOnScreen } = req('window');
+  const one = [{ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }];
+  const two = [...one, { workArea: { x: 1920, y: 0, width: 2560, height: 1400 } }];
+  assert.deepStrictEqual(placeOnScreen({ x: 100, y: 80, width: 1440, height: 920 }, one), { x: 100, y: 80 });
+  // on the second monitor: fine while it is there, dropped once it is unplugged
+  assert.deepStrictEqual(placeOnScreen({ x: 2200, y: 60, width: 1440, height: 920 }, two), { x: 2200, y: 60 });
+  assert.deepStrictEqual(placeOnScreen({ x: 2200, y: 60, width: 1440, height: 920 }, one), {});
+  // a monitor to the left has negative positions
+  assert.deepStrictEqual(placeOnScreen({ x: -1500, y: 40, width: 1200, height: 800 }, [...one, { workArea: { x: -1920, y: 0, width: 1920, height: 1040 } }]), { x: -1500, y: 40 });
+  // title bar above the screen, below it, or only a sliver showing at the side
+  assert.deepStrictEqual(placeOnScreen({ x: 100, y: -400, width: 1440, height: 920 }, one), {});
+  assert.deepStrictEqual(placeOnScreen({ x: 100, y: 1030, width: 1440, height: 920 }, one), {});
+  assert.deepStrictEqual(placeOnScreen({ x: 1800, y: 80, width: 1440, height: 920 }, one), {});
+  // nothing saved yet: Windows picks the place
+  assert.deepStrictEqual(placeOnScreen({}, one), {});
+  assert.deepStrictEqual(placeOnScreen(undefined, one), {});
+  assert.deepStrictEqual(placeOnScreen({ x: 100, y: 80 }, []), {});
+});
+
+test('winapi: bringing a window to the front never throws', () => {
+  const winapi = req('winapi');
+  // off Windows, or with a handle that isn't one, it reports that it could not help
+  if (!isWin) assert.strictEqual(winapi.toFront(Buffer.alloc(8)), null);
+  assert.strictEqual(winapi.toFront(null), null);
+  assert.strictEqual(winapi.toFront(Buffer.alloc(0)), null);
+  // a window that does not exist: Windows refuses, Rack carries on
+  if (isWin) assert.strictEqual(winapi.toFront(Buffer.from([0x34, 0x12, 0xcd, 0xab, 0, 0, 0, 0])), false);
+});
+
 test('winapi: running programs and starting one (Windows only)', async () => {
   const winapi = req('winapi.js');
   if (!isWin) { assert.strictEqual(winapi.available(), false); return 'skipped (not Windows)'; }

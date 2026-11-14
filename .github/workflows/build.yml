@@ -80,6 +80,10 @@ jobs:
           finally { Get-Process Rack -ErrorAction SilentlyContinue | Stop-Process -Force }
           exit $code
 
+      - name: Check that starting Rack again brings its window back
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/ci-check-reopen.ps1 -Exe dist\win-unpacked\Rack.exe -Shot rack-reopen.png
+
       - name: Install and uninstall with the installer
         shell: pwsh
         run: |
@@ -98,7 +102,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rack-window
-          path: rack-window.png
+          path: |
+            rack-window.png
+            rack-reopen.png
           if-no-files-found: ignore
 
       - name: Keep the build

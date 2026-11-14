@@ -2,6 +2,8 @@
 // - running(): the full path of every running program, in a few milliseconds
 // - open(file, args, cwd, admin): starts a program the way Explorer does, so Windows can ask for
 //   administrator permission when the program needs it
+// - toFront(handle): puts Rack's window in front when you ask for it. Windows only lets a program
+//   take the foreground for a moment after you start it; later it just flashes the taskbar button
 // If the native helper can't load on some PC, both fall back to PowerShell: slower, but games still
 // start and get timed. RACK_NO_NATIVE=1 forces the fallback (for testing, or as an escape hatch).
 'use strict';
@@ -27,6 +29,18 @@ function load() {
       ShellExecute: sh32.func('intptr_t __stdcall ShellExecuteW(void *hwnd, const char16_t *op, const char16_t *file, const char16_t *params, const char16_t *dir, int show)'),
       HANDLE,
     };
+    try {
+      const u32 = koffi.load('user32.dll');
+      api.user = {
+        GetForegroundWindow: u32.func('uintptr_t __stdcall GetForegroundWindow()'),
+        GetWindowThreadProcessId: u32.func('uint32_t __stdcall GetWindowThreadProcessId(uintptr_t hwnd, void *pid)'),
+        AttachThreadInput: u32.func('bool __stdcall AttachThreadInput(uint32_t from, uint32_t to, bool attach)'),
+        SetForegroundWindow: u32.func('bool __stdcall SetForegroundWindow(uintptr_t hwnd)'),
+        BringWindowToTop: u32.func('bool __stdcall BringWindowToTop(uintptr_t hwnd)'),
+        IsHungAppWindow: u32.func('bool __stdcall IsHungAppWindow(uintptr_t hwnd)'),
+        GetCurrentThreadId: k32.func('uint32_t __stdcall GetCurrentThreadId()'),
+      };
+    } catch { /* the window calls are optional; Rack then relies on Electron's own */ }
   } catch (e) {
     api = null;
     module.exports.loadError = e.message;
@@ -108,4 +122,29 @@ function openFallback(file, params, cwd, admin) {
   });
 }
 
-module.exports = { running, open, available: () => !!load(), quoteArg, loadError: null };
+/**
+ * Puts a window of this program in front of the others and gives it the keyboard.
+ * handle is what BrowserWindow.getNativeWindowHandle() returns. Resolves to true when the window is
+ * in front afterwards, false when Windows refused, and null when the helper isn't available.
+ * Call it from the thread that owns the window (Electron's main process).
+ */
+function toFront(handle) {
+  const a = load();
+  if (!a || !a.user || !handle || handle.length < 4) return null;
+  const u = a.user;
+  try {
+    const hwnd = handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0));
+    const front = () => BigInt(u.GetForegroundWindow());
+    const fg = front();
+    if (fg === hwnd) return true;
+    // sharing the input queue of the program in front is what lets this one take over from it
+    const mine = u.GetCurrentThreadId();
+    const theirs = fg ? u.GetWindowThreadProcessId(fg, null) : 0;
+    const attached = !!theirs && theirs !== mine && !u.IsHungAppWindow(fg) && u.AttachThreadInput(mine, theirs, true);
+    try { u.BringWindowToTop(hwnd); u.SetForegroundWindow(hwnd); }
+    finally { if (attached) u.AttachThreadInput(mine, theirs, false); }
+    return front() === hwnd;
+  } catch { return null; }
+}
+
+module.exports = { running, open, toFront, available: () => !!load(), quoteArg, loadError: null };

@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, protocol, net, Menu, nativeImage, Tray, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, protocol, net, Menu, nativeImage, Tray, Notification, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -16,6 +16,7 @@ const backups = require('./backups');
 const { Pictures, SLOTS } = require('./wallpaper');
 const pictures = new Pictures();
 const { Updates } = require('./updates');
+const { placeOnScreen } = require('./window');
 
 const APP_ID = 'app.rack.launcher';
 const PORTABLE = !!process.env.PORTABLE_EXECUTABLE_DIR;
@@ -534,8 +535,8 @@ function refreshTray() {
     for (const g of recent) tmpl.push({ label: g.name.length > 40 ? g.name.slice(0, 39) + '…' : g.name, click: () => playGame(g.id).catch((e) => notify(e.message)) });
     tmpl.push({ type: 'separator' });
   }
-  tmpl.push({ label: 'Open Rack', click: () => showWindow() });
-  tmpl.push({ label: 'Scan for games', click: () => showWindow('scan') });
+  tmpl.push({ label: 'Open Rack', click: () => showWindow(null, { asked: true }) });
+  tmpl.push({ label: 'Scan for games', click: () => showWindow('scan', { asked: true }) });
   tmpl.push({ type: 'separator' });
   tmpl.push({ label: 'Quit Rack', click: () => { quitting = true; app.quit(); } });
   tray.setContextMenu(Menu.buildFromTemplate(tmpl));
@@ -548,8 +549,8 @@ function ensureTray() {
   if (!want && tray) { tray.destroy(); tray = null; return; }
   if (want && !tray) {
     tray = new Tray(nativeImage.createFromPath(iconPath()));
-    tray.on('click', () => showWindow());
-    tray.on('double-click', () => showWindow());
+    tray.on('click', () => showWindow(null, { asked: true }));
+    tray.on('double-click', () => showWindow(null, { asked: true }));
     refreshTray();
   }
 }
@@ -572,19 +573,21 @@ function applyTheme() {
   if (win && !win.isDestroyed() && process.platform === 'win32') { try { win.setTitleBarOverlay(overlay()); } catch { /* older Windows */ } }
 }
 
-function createWindow({ view = null } = {}) {
+// now: show the window at once, in the theme's colour, and let the page fill it in. Used when you
+// ask for Rack while it is already running, because Windows only lets it come to the front then.
+function createWindow({ view = null, now = false } = {}) {
   const b = store.data.settings.bounds || {};
   pendingView = view;
   win = new BrowserWindow({
-    width: b.width || 1440, height: b.height || 920, x: b.x, y: b.y, minWidth: 1080, minHeight: 680,
-    title: 'Rack', show: false, icon: iconPath(),
+    width: b.width || 1440, height: b.height || 920, ...placeOnScreen(b, screen.getAllDisplays()), minWidth: 1080, minHeight: 680,
+    title: 'Rack', show: now, icon: iconPath(),
     backgroundColor: overlay().color,
     titleBarStyle: 'hidden', titleBarOverlay: overlay(),
     webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
   });
   if (b.maximized) win.maximize();
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  if (!now) win.once('ready-to-show', () => win.show());
   win.webContents.on('did-finish-load', () => { if (pendingView) { win.webContents.send('go', pendingView); pendingView = null; } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -605,14 +608,33 @@ function createWindow({ view = null } = {}) {
   win.on('closed', () => { win = null; });
 }
 
-function showWindow(view) {
+/* RACK_NO_FRONT=1 turns the bring-to-front help off, the way Rack 1.2.0 behaved (for testing). */
+const FRONT = process.env.RACK_NO_FRONT !== '1';
+
+// Puts the window in front of other programs. Windows refuses that to a program you didn't just
+// start and flashes its taskbar button instead; the helper gets past that, and failing the helper,
+// the window is at least raised above the others.
+function toFront() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+  if (!FRONT || process.platform !== 'win32') return;
+  if (winapi.toFront(win.getNativeWindowHandle())) return;
+  win.setAlwaysOnTop(true); win.moveTop(); win.setAlwaysOnTop(false);
+}
+
+// asked: you asked for the window (the Rack shortcut, the tray icon), as opposed to Rack coming
+// back by itself after a game
+function showWindow(view, { asked = false } = {}) {
+  const front = asked && FRONT;
   if (win && !win.isDestroyed()) {
-    if (win.isMinimized()) win.restore();
-    win.show(); win.focus();
+    if (front) toFront();
+    else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
     if (view) win.webContents.send('go', view);
     return;
   }
-  createWindow({ view });
+  createWindow({ view, now: front });
+  if (front) toFront();
 }
 
 /* ---------- right-click menus ---------- */
@@ -1072,7 +1094,7 @@ function handleArgs(argv) {
   const id = argValue(argv, 'launch');
   if (id) { playGame(id).catch((e) => toast(e.message, 'warn')); return true; }
   const view = argValue(argv, 'open');
-  if (view) { showWindow(view); return true; }
+  if (view) { showWindow(view, { asked: true }); return true; }
   return false;
 }
 
@@ -1126,7 +1148,8 @@ app.whenReady().then(async () => {
   setInterval(() => findNew(), 30 * 60000);
 });
 
-app.on('second-instance', (_e, argv) => { if (!handleArgs(argv.slice(1))) showWindow(); });
+// starting Rack again while it runs (its shortcut, the Start menu) brings this copy's window back
+app.on('second-instance', (_e, argv) => { if (!handleArgs(argv.slice(1))) showWindow(null, { asked: true }); });
 app.on('before-quit', () => {
   quitting = true;
   // a game still running when Rack closes keeps the time seen so far
