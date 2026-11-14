@@ -421,6 +421,68 @@ test('stats: sessions added up by day, week and month', async () => {
   assert.strictEqual(span(45), '45 min'); assert.strictEqual(span(120), '2 h'); assert.strictEqual(span(150), '2 h 30 min');
 });
 
+test('watched folders: a check once the folder is quiet', () => {
+  const { FolderWatch, isDrive } = req('watch');
+  assert.ok(isDrive('D:\\') && isDrive('d:') && isDrive('D:/') && isDrive(path.parse(process.cwd()).root));
+  assert.ok(!isDrive('D:\\Games') && !isDrive(T));
+  // a clock and timers the test moves by hand
+  let t = 1000000; const timers = new Map(); let seq = 0;
+  const setTimer = (fn, ms) => { timers.set(++seq, { fn, at: t + ms }); return seq; };
+  const clearTimer = (id) => timers.delete(id);
+  const run = (ms) => { const end = t + ms; for (;;) { const due = [...timers].filter(([, x]) => x.at <= end).sort((a, b) => a[1].at - b[1].at)[0]; if (!due) break; t = due[1].at; timers.delete(due[0]); due[1].fn(); } t = end; };
+  const made = [], closed = [], checks = [];
+  const watch = (p, opts, cb) => { made.push({ p, opts, cb }); return { close: () => closed.push(p), on: () => {} }; };
+  const games = path.join(T, 'wgames'), dl = path.join(T, 'wdl');
+  let playing = false;
+  const fw = new FolderWatch({ watch, setTimer, clearTimer, now: () => t, onQuiet: (id) => checks.push([id, t]), canCheck: () => !playing,
+    known: (id) => (id === 'f1' ? [path.join(games, 'Hades').toLowerCase()] : []) });
+  const root = path.parse(process.cwd()).root;
+  assert.deepStrictEqual(fw.set([{ id: 'f1', path: games }, { id: 'f2', path: dl }, { id: 'drive', path: root }]), ['f1', 'f2'], 'a whole drive is not watched');
+  assert.ok(made.every((m) => m.opts.recursive && m.opts.persistent === false));
+  const [w1, w2] = made;
+  // a download: files keep arriving for two minutes, then stop. One check, 45 seconds after the last file
+  const t0 = t;
+  for (let i = 0; i < 24; i++) { w1.cb('rename', path.join('New Game', `part${i}.bin`)); run(5000); }
+  assert.deepStrictEqual(checks, [], 'nothing while files are still arriving');
+  assert.ok(fw.busy('f1') && !fw.busy('f2'));
+  run(60000);
+  assert.deepStrictEqual(checks, [['f1', t0 + 23 * 5000 + 45000]]);
+  assert.ok(!fw.busy('f1'));
+  // changes inside a game already in the library (saves, logs) are not news
+  w1.cb('change', path.join('Hades', 'saves', 'slot1.sav')); w1.cb('change', 'Hades');
+  run(120000);
+  assert.strictEqual(checks.length, 1);
+  // ... but a folder that only starts with the same letters is
+  w1.cb('rename', path.join('Hades II', 'Hades2.exe'));
+  run(46000);
+  assert.strictEqual(checks.length, 2);
+  // two changes close together: the second check waits out the two-minute gap
+  w1.cb('rename', 'Another'); run(46000);
+  assert.strictEqual(checks.length, 2, 'checked a moment ago');
+  run(120000);
+  assert.strictEqual(checks.length, 3);
+  // no checks while a game is running; it happens after
+  run(300000);
+  playing = true; w2.cb('rename', 'x.zip'); run(600000);
+  assert.strictEqual(checks.length, 3);
+  playing = false; run(31000);
+  assert.deepStrictEqual(checks.at(-1)[0], 'f2');
+  // a change with no file name still counts
+  run(300000); w2.cb('rename', null); run(46000);
+  assert.strictEqual(checks.length, 5);
+  // un-watching a folder closes its watcher; a path change restarts it; a watcher that can't start is skipped
+  assert.deepStrictEqual(fw.set([{ id: 'f2', path: dl }]), ['f2']);
+  assert.deepStrictEqual(closed, [games]);
+  w1.cb('rename', 'late'); run(100000);
+  assert.strictEqual(checks.length, 5, 'a closed watcher is ignored');
+  fw.set([{ id: 'f2', path: games }]);
+  assert.deepStrictEqual(closed, [games, dl]); assert.strictEqual(made.length, 3);
+  const bad = new FolderWatch({ watch: () => { throw new Error('ENOENT'); }, onQuiet: () => {} });
+  assert.deepStrictEqual(bad.set([{ id: 'x', path: games }]), []);
+  fw.close();
+  assert.strictEqual(closed.length, 3);
+});
+
 test('window: opens where a screen can show it', () => {
   const { placeOnScreen } = req('window');
   const one = [{ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }];

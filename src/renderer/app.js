@@ -1097,14 +1097,19 @@ function renderScan() {
         </div>
       </div>
       <div class="panel">
-        <h2 class="title">Folders and drives</h2><p>Add a folder or a whole drive. Rack looks inside each game folder for store files, game engines and what each program says about itself, and skips installers, tools and ordinary apps.</p>
+        <h2 class="title">Folders and drives</h2><p>Add a folder or a whole drive. Rack looks inside each game folder for store files, game engines and what each program says about itself, and skips installers, tools and ordinary apps. Turn on “Add new games by itself” for a folder you copy or download games into, and they join your library once they have finished arriving.</p>
         ${S.folders.map((fo) => {
           const pr = sc.progress[fo.id], res = sc.results[fo.id];
           const running = pr && !pr.done;
           const status = running ? progressText(pr)
             : res ? `Done. ${res.filter((c) => c.status === 'likely').length} games found${res.filter((c) => c.status === 'unsure').length ? `, ${res.filter((c) => c.status === 'unsure').length} maybe` : ''}${pr && pr.stopped ? ' (stopped early)' : ''}`
               : fo.lastScan ? `Last checked ${ago(fo.lastScan, true).toLowerCase()}` : 'Not scanned yet';
-          return `<div class="folder" data-folder="${fo.id}">${ic('folder')}<b title="${esc(fo.path)}"><bdi>${esc(fo.path)}</bdi></b><span class="muted">${esc(status)}</span><span class="spacer"></span>${running ? `<span class="bar"><i></i></span><button class="btn small ghost" data-act="stopScan" data-id="${fo.id}">Stop</button>` : `<button class="btn small ghost" data-act="rescan" data-id="${fo.id}">Rescan</button><button class="btn small ghost" data-act="folderRemove" data-id="${fo.id}">Remove</button>`}</div>`;
+          const how = !fo.watch ? 'New games here wait in “New games found” until you add them.'
+            : fo.live ? 'New games here are added as soon as they finish copying or downloading.'
+              : fo.drive ? 'New games here are added within half an hour. A whole drive is too busy to watch file by file; pick a games folder to have them added at once.'
+                : 'New games here are added within half an hour.';
+          return `<div class="folder" data-folder="${fo.id}"><div class="frow">${ic('folder')}<b title="${esc(fo.path)}"><bdi>${esc(fo.path)}</bdi></b><span class="muted">${esc(status)}</span><span class="spacer"></span>${running ? `<span class="bar"><i></i></span><button class="btn small ghost" data-act="stopScan" data-id="${fo.id}">Stop</button>` : `<button class="btn small ghost" data-act="rescan" data-id="${fo.id}">Rescan</button><button class="btn small ghost" data-act="folderRemove" data-id="${fo.id}">Remove</button>`}</div>
+            <label class="fwatch"><button class="toggle" role="switch" aria-label="Add new games in ${esc(fo.path)} by itself" aria-checked="${!!fo.watch}" data-act="folderWatch" data-id="${fo.id}"></button><span>Add new games by itself</span><small>${esc(how)}</small></label></div>`;
         }).join('')}
         <button class="btn" style="margin:4px 0 18px" data-act="folderAdd">${ic('plus')}Add folder or drive</button>
         ${sc.error ? `<p class="note" style="color:var(--signal)">${esc(sc.error)}</p>` : ''}
@@ -1685,6 +1690,7 @@ const ACT = {
   folderAdd: async () => { const r = await call(R.folderAdd()); if (r && r.id) { S = await R.state(); scanFolder(r.id); } },
   rescan: (el) => scanFolder(el.dataset.id),
   stopScan: (el) => R.stopScan(el.dataset.id),
+  folderWatch: (el) => { const on = el.getAttribute('aria-checked') !== 'true'; call(R.folderWatch(el.dataset.id, on), on ? 'Rack will add the games that appear in this folder' : 'New games in this folder will wait for you'); },
   folderRemove: async (el) => {
     for (const c of ui.scan.results[el.dataset.id] || []) ui.scan.checked.delete(c.id);
     delete ui.scan.results[el.dataset.id];

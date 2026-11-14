@@ -8,7 +8,7 @@ const DEFAULT = {
   version: 2,
   games: [],
   collections: [],
-  folders: [],      // folders the user scans: [{ id, path, lastScan, marks }]
+  folders: [],      // folders the user scans: [{ id, path, lastScan, marks, watch }]; watch: add the games that appear there
   romFolders: [],   // [{ id, path, emulator, args, exts: [], label }]
   ignored: [],      // games the user removed or dismissed, so automatic finding doesn't bring them back: ['steam:620', 'exe:d:\\games\\x\\x.exe']
   found: [],        // new games found in the background, waiting for review

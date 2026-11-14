@@ -18,6 +18,7 @@ const pictures = new Pictures();
 const { Updates } = require('./updates');
 const { placeOnScreen } = require('./window');
 const { Thumbs } = require('./thumbs');
+const { FolderWatch, isDrive } = require('./watch');
 
 const APP_ID = 'app.rack.launcher';
 const PORTABLE = !!process.env.PORTABLE_EXECUTABLE_DIR;
@@ -57,7 +58,8 @@ function snapshot() {
   const d = store.data;
   return {
     games: d.games.map((g) => ({ ...g, total: totalMinutes(g), sessions: (g.sessions || []).slice(-120) })),
-    collections: d.collections, folders: d.folders, romFolders: d.romFolders, settings: d.settings,
+    // marks are Rack's own bookkeeping and can be long; drive and live tell the Scan screen how a watched folder is checked
+    collections: d.collections, folders: d.folders.map(({ marks, ...f }) => ({ ...f, drive: isDrive(f.path), live: !!folderWatch && folderWatch.watching(f.id) })), romFolders: d.romFolders, settings: d.settings,
     running: tracker ? tracker.running().map((id) => ({ id, start: tracker.startedAt(id) })) : [],
     launching: tracker ? tracker.launching() : [], uninstalling: [...uninstalling.keys()],
     found: d.found, update: updates ? updates.state : null,
@@ -320,6 +322,52 @@ function folderMarks(root, candidates) {
 }
 const marksChanged = (a, b) => !a || Object.keys(b).length !== Object.keys(a).length || Object.entries(b).some(([k, v]) => a[k] !== v);
 
+/**
+ * Scans one of your folders for games that aren't in the library yet. In a folder set to add
+ * games by itself they are added, and their names returned; otherwise they wait in "New games found".
+ */
+async function checkFolder(f) {
+  const r = await detect.scan(f.path, { steamInstalled: !!steamRootPath, notGames: scan.steamNotGame });
+  f.marks = folderMarks(f.path, r.candidates);
+  f.lastScan = Date.now();
+  const names = [];
+  for (const c of r.candidates) {
+    if (c.status !== 'likely') continue;
+    const key = folderKey(c);
+    const inLib = store.data.games.some((g) => Store.keyOf(g) === key || (g.exe && c.exe && g.exe.toLowerCase() === c.exe.toLowerCase()) || (g.installDir && c.installDir && g.installDir.toLowerCase() === c.installDir.toLowerCase()));
+    if (inLib || store.data.ignored.includes(key)) continue;
+    if (f.watch) {
+      const ng = await addFound({ source: c.source, sourceId: c.sourceId, uri: c.uri, name: c.name, exe: c.exe, args: c.args, cwd: c.cwd, installDir: c.installDir, steamAppId: c.steamAppId, otherExes: (c.exes || []).map((e) => e.path).filter((p) => p !== c.exe) });
+      if (ng) { names.push(ng.name); store.data.found = store.data.found.filter((x) => x.key !== key); }
+    } else if (!store.data.found.some((x) => x.key === key)) store.data.found.push({ ...c, key, from: f.path, foundAt: Date.now() });
+  }
+  return names;
+}
+const addedText = (names) => (names.length === 1 ? `Added ${names[0]}` : `Added ${names.length} new games: ${names.slice(0, 3).join(', ')}${names.length > 3 ? '…' : ''}`);
+
+/* Folders set to add games by themselves are watched: when files stop arriving, the folder is checked. */
+let folderWatch = null;
+function syncFolderWatch() {
+  if (!folderWatch) {
+    folderWatch = new FolderWatch({
+      onQuiet: (id) => watchedCheck(id),
+      known: (id) => { const f = store.data.folders.find((x) => x.id === id); const root = f ? f.path.toLowerCase() : null; return root ? store.data.games.map((g) => (g.installDir || '').toLowerCase()).filter((d) => d.startsWith(root) && d.length > root.length) : []; },
+      canCheck: () => !finding && !(tracker && tracker.running().length),
+    });
+  }
+  folderWatch.set(store.data.folders.filter((f) => f.watch && exists(f.path)));
+}
+async function watchedCheck(id) {
+  const f = store.data.folders.find((x) => x.id === id);
+  if (!f || !f.watch || finding || !exists(f.path)) return;
+  finding = true;
+  try {
+    const names = await checkFolder(f);
+    if (names.length) { checkMissing(); toast(addedText(names)); }
+    changed();
+  } catch (e) { console.error('watched folder', e); } finally { finding = false; }
+}
+
 let finding = false;
 async function findNew({ folders = true } = {}) {
   if (finding || !store.data.settings.autoFind) return;
@@ -346,24 +394,15 @@ async function findNew({ folders = true } = {}) {
     }
     if (folders) {
       for (const f of store.data.folders) {
-        if (!exists(f.path)) continue;
-        const now = folderMarks(f.path, folderResults.get(f.id));
-        if (!marksChanged(f.marks, now)) continue;
-        const r = await detect.scan(f.path, { steamInstalled: !!steamRootPath, notGames: scan.steamNotGame });
-        f.marks = folderMarks(f.path, r.candidates);
-        f.lastScan = Date.now();
-        for (const c of r.candidates) {
-          if (c.status !== 'likely') continue;
-          const key = folderKey(c);
-          const inLib = store.data.games.some((g) => Store.keyOf(g) === key || (g.exe && c.exe && g.exe.toLowerCase() === c.exe.toLowerCase()) || (g.installDir && c.installDir && g.installDir.toLowerCase() === c.installDir.toLowerCase()));
-          if (inLib || store.data.ignored.includes(key) || store.data.found.some((x) => x.key === key)) continue;
-          store.data.found.push({ ...c, key, from: f.path, foundAt: Date.now() });
-        }
+        // a folder whose files are still changing is left to its watcher, which checks it once it is quiet
+        if (!exists(f.path) || (folderWatch && folderWatch.busy(f.id))) continue;
+        if (!marksChanged(f.marks, folderMarks(f.path, folderResults.get(f.id)))) continue;
+        addedNames.push(...await checkFolder(f));
       }
     }
     checkMissing();
     changed();
-    if (addedNames.length) toast(addedNames.length === 1 ? `Added ${addedNames[0]}` : `Added ${addedNames.length} new games: ${addedNames.slice(0, 3).join(', ')}${addedNames.length > 3 ? '…' : ''}`);
+    if (addedNames.length) toast(addedText(addedNames));
   } catch (e) { console.error('find new games', e); } finally { finding = false; }
 }
 
@@ -1047,7 +1086,17 @@ function registerIpc() {
     changed();
     return { ok: true, id: store.data.folders.find((f) => f.path.toLowerCase() === dir.toLowerCase()).id };
   });
-  handle('scan:folderRemove', (id) => { store.data.folders = store.data.folders.filter((f) => f.id !== id); folderResults.delete(id); changed(); return { ok: true }; });
+  handle('scan:folderRemove', (id) => { store.data.folders = store.data.folders.filter((f) => f.id !== id); folderResults.delete(id); syncFolderWatch(); changed(); return { ok: true }; });
+  // a folder that adds its games by itself: watched for changes, and checked now
+  handle('scan:folderWatch', (id, on) => {
+    const f = store.data.folders.find((x) => x.id === id);
+    if (!f) return { ok: false };
+    f.watch = !!on;
+    syncFolderWatch();
+    changed();
+    if (f.watch) setTimeout(() => watchedCheck(id), 300);
+    return { ok: true };
+  });
   handle('scan:folder', async (id) => {
     const f = store.data.folders.find((x) => x.id === id);
     if (!f) throw new Error('Folder not found');
@@ -1217,16 +1266,13 @@ app.whenReady().then(async () => {
   protocol.handle('rack', async (req) => {
     const u = new URL(req.url);
     const name = path.basename(decodeURIComponent(u.pathname));
-    if (u.host === 'cover' || u.host === 'hero') return net.fetch(pathToFileURL(path.join(u.host === 'cover' ? store.coverDir : store.heroDir, name)).toString());
-    if (u.host === 'thumb') {
-      const f = await thumbs.file(name);
-      return f ? net.fetch(pathToFileURL(f).toString()) : new Response('', { status: 404 });
-    }
-    if (u.host === 'wall') {
-      const f = pictures.file(name);
-      return f ? net.fetch(pathToFileURL(f).toString()) : new Response('', { status: 404 });
-    }
-    return new Response('', { status: 404 });
+    const none = () => new Response('', { status: 404 });
+    // a picture that has gone missing is a 404 for the page, not an error for Rack
+    const serve = (f) => (f ? net.fetch(pathToFileURL(f).toString()).catch(none) : none());
+    if (u.host === 'cover' || u.host === 'hero') return serve(path.join(u.host === 'cover' ? store.coverDir : store.heroDir, name));
+    if (u.host === 'thumb') return serve(await thumbs.file(name));
+    if (u.host === 'wall') return serve(pictures.file(name));
+    return none();
   });
 
   applyTheme();
@@ -1243,6 +1289,7 @@ app.whenReady().then(async () => {
   updateJumpList();
   steamRootPath = await scan.steamRoot().catch(() => null);
   watchStores();
+  syncFolderWatch();
   refreshSteamHours().then(fillMissingArt);
   setTimeout(fillHeroes, 8000);
   if (store.data.settings.steamApiKey && Date.now() - (store.data.settings.ownedAt || 0) > 12 * 3600 * 1000) refreshOwned().catch(() => {});

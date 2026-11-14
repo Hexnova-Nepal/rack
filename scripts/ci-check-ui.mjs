@@ -48,6 +48,32 @@ console.log('interface:', JSON.stringify(ui));
 const app = await run('window.rack.state().then((s) => s.app)');
 console.log('app:', JSON.stringify(app));
 
+// Play stats draws, and the quick-launch window opens with its shortcut registered
+await run(`document.querySelector('#rail [data-act="go"][data-view="stats"]').click()`);
+await sleep(1500);
+const stats = await run(`(document.querySelector('#view h1') || {}).textContent || ''`);
+console.log('stats screen:', stats);
+await run(`document.querySelector('#rail [data-act="go"][data-view="home"]').click()`);
+await run('window.rack.quickShow()');
+let quick = null;
+for (let i = 0; i < 20 && !quick; i++) {
+  await sleep(500);
+  try { quick = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find((t) => t.type === 'page' && /renderer\/quick\.html/.test(t.url)); } catch { /* try again */ }
+}
+let quickText = '';
+if (quick) {
+  const qs = new WebSocket(quick.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { qs.onopen = res; qs.onerror = () => rej(new Error('could not connect to the quick-launch window')); });
+  await sleep(1200);
+  quickText = await new Promise((res) => {
+    qs.onmessage = (m) => { const d = JSON.parse(m.data); if (d.id === 1) res(d.result?.result?.value || ''); };
+    qs.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: `document.querySelector('#qbox') ? (document.querySelector('.qrow, .qempty') || {}).textContent || '' : ''`, returnByValue: true } }));
+  });
+  qs.close();
+  console.log('quick launch:', JSON.stringify(quickText.trim().slice(0, 80)));
+}
+await run('window.rack.quickHide()');
+
 const shot = await send('Page.captureScreenshot', { format: 'png' });
 if (shot.result?.data) fs.writeFileSync(OUT, Buffer.from(shot.result.data, 'base64'));
 ws.close();
@@ -57,5 +83,9 @@ if (!ui.rail || !ui.heading) fail('The interface did not draw');
 if (!ui.font) fail('The bundled fonts did not load');
 if (!app.packaged) fail('Expected the packaged app');
 if (app.windows && !app.native) fail(`The native Windows helper did not load: ${app.nativeError}`);
+if (stats !== 'Play stats') fail('The Play stats screen did not draw');
+if (!quick) fail('The quick-launch window did not open');
+if (!quickText.trim()) fail('The quick-launch window opened but drew nothing');
+if (app.windows && app.quickKeyOk === false) fail('Windows refused the quick-launch shortcut');
 if (errors.length) fail('Errors in the page:\n' + errors.join('\n'));
 console.log('Rack’s window and interface work');

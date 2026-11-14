@@ -29,6 +29,10 @@ The files aren't code-signed yet, so Windows SmartScreen may say "Windows protec
 - **Wallpaper**: your pictures, your games' artwork, or both, changing on a timer or with the time of day, or following the game you're looking at.
 - **The rack**: 3 to 12 cartridges of your most played games; drag a game onto a cartridge to keep it there.
 - **Drag and drop**: onto collections and lists, into your own order, Home rows you can arrange, and a desktop layout for Home.
+- **Quick launch**: press Ctrl + Alt + Space anywhere in Windows, type a few letters of a game's name, press Enter.
+- **Play stats**: time played per day, week and month, your most played games, and your longest sessions.
+- **Folders that add their games by themselves**: Rack notices a new game in a folder you choose and adds it once it has finished copying or downloading.
+- **Big libraries stay fast**: only the games on screen are drawn, and tiles use small copies of the covers.
 - **Uninstall** through each game's own uninstaller or store, with safety checks before anything is deleted.
 
 ## Build it yourself
@@ -69,11 +73,14 @@ When that version has no release yet, the workflow tests, builds, signs (once Si
 | `src/main/uninstall.js` | Works out how to uninstall a game, with safety checks |
 | `src/main/backups.js` | Save backups through Ludusavi, and the library backup file |
 | `src/main/wallpaper.js` | Wallpaper pictures from your folders, served by id only |
+| `src/main/thumbs.js` | Small copies of covers, made the first time each is shown |
+| `src/main/watch.js` | Watches the folders that add their games by themselves, and waits until they are quiet |
+| `src/main/window.js` | Where the window opens, so it is never off-screen |
 | `src/main/updates.js` | Updates from GitHub Releases |
 | `src/main/store.js` | The library file, `library.json`, in the data folder |
 | `src/main/vdf.js` | Reads Steam's .vdf and .acf files |
 | `src/preload.js` | The bridge between the interface and the main process |
-| `src/renderer/` | The interface: `app.js`, `styles.css`, `themes.js`, fonts, and the rack figure in `vendor/` |
+| `src/renderer/` | The interface: `app.js`, `styles.css`, `themes.js`, fonts, and the rack figure in `vendor/`; `stats.mjs` adds up play time; `quick.html`, `quick.js` and `match.mjs` are the quick-launch box |
 | `test/run.js` | Unit tests, with small real .exe files in `test/fixtures/bin` |
 
 ## Data
@@ -93,6 +100,10 @@ Uninstalling Rack keeps your data. Rack sends nothing about you anywhere; [CODE_
 - Save backups cover the games in Ludusavi's database, which is large but not complete.
 - Wallpaper art for games that aren't on Steam needs a SteamGridDB key; without one, those games show their blurred cover.
 - The Home desktop keeps each game in a grid cell. On a smaller window, games that don't fit move to the nearest free cell.
+- Play stats count only what Rack timed, from the last 300 sessions of each game.
+- The quick-launch shortcut works only while Rack is running. If you turn off "Keep Rack running in the tray" and close the window, it stops.
+- A folder on a network share, or a whole drive, is not watched file by file; its new games are added within half an hour.
+- Small cover copies are made for JPEG and PNG covers. WebP, GIF and AVIF covers are drawn at full size.
 - No controller mode yet.
 
 ## Licence

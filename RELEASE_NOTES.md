@@ -1,3 +1,23 @@
+## What's new in Rack 1.3
+
+**Faster with big libraries.** Rack now draws only the games you can see, and adds the rest as you scroll. With 2,000 games, opening All games, sorting, and every change to the library are five to twenty times quicker. Arrow keys, Shift-click, Ctrl + A and dragging still reach every game.
+
+**Lighter on memory.** Tiles and lists now show a small copy of each cover instead of the full-size picture, which can be as large as 1200 × 1800. The small copy is made the first time a cover is shown.
+
+**Reduce effects.** A new switch in Settings › Appearance turns off the blur behind panels and the fades. Use it if Rack feels slow on your PC.
+
+**Quick launch.** Press **Ctrl + Alt + Space** anywhere in Windows and a small box opens: type a few letters of a game's name and press Enter. `wit 3` finds The Witcher 3 and `gta` finds Grand Theft Auto. Ctrl + Enter opens the game's page instead. It works whenever Rack is running, including in the tray. Change the shortcut or turn it off in Settings › Quick launch.
+
+**Play stats.** A new screen in the sidebar shows how much you played over the last 30 days, 12 weeks or 12 months: time per day, your most played games, which days of the week you play, and your longest sessions. It counts the time Rack timed itself.
+
+**Folders that add their games by themselves.** On the Scan screen, each folder has a new switch, "Add new games by itself". Turn it on for a folder you copy or download games into: Rack notices new files, waits until they have stopped arriving, and adds the game. A whole drive is checked every half hour instead.
+
+Also fixed: covers showed on top of the column headings in the list view.
+
+Under the hood: the Windows build now also opens the quick-launch box and the stats screen in the packaged app.
+
+---
+
 ## What's new in Rack 1.2.1
 
 **Fixed: Rack's shortcut did nothing while Rack was in the tray.** If you closed Rack's window (it keeps running near the clock to time your games) and then started Rack again from its desktop icon or the Start menu, the window either didn't come up or only flashed on the taskbar. Windows was refusing to let the window come to the front. Rack's shortcut now always brings the window back, in front of whatever else is open. The same goes when Rack is minimised or behind another window.
