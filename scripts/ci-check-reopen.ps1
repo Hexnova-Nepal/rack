@@ -110,6 +110,20 @@ $lockWas = [W]::LockTimeout()
 $lockSet = if ($lockWas -lt 200000) { [W]::SetLockTimeout(200000) } else { $true }
 Write-Host "Foreground lock: was $lockWas ms, now $([W]::LockTimeout()) ms (set: $lockSet)"
 
+# Starting Rack the second time. From this script it would inherit the script's standing with
+# Windows, which can include the right to take the foreground. Task Scheduler starts it with no
+# such right, like a program the user has not touched: the case where windows open behind others.
+$task = "RackReopen$PID"
+$viaTask = $false
+try {
+  $action = New-ScheduledTaskAction -Execute $Exe
+  $who = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
+  Register-ScheduledTask -TaskName $task -Action $action -Principal $who -Force | Out-Null
+  $viaTask = $true
+} catch { Write-Host "Task Scheduler not usable ($($_.Exception.Message)); starting Rack from this script instead" }
+Write-Host "Second start goes through: $(if ($viaTask) { 'Task Scheduler' } else { 'this script' })"
+function Start-Again { if ($viaTask) { Start-ScheduledTask -TaskName $task } else { Start-Process -FilePath $Exe | Out-Null } }
+
 # One pass: start Rack, then ask for it again in three situations. Returns what happened in each.
 function Run-Pass([string]$Name, [bool]$NoFront) {
   Stop-Rack
@@ -136,7 +150,7 @@ function Run-Pass([string]$Name, [bool]$NoFront) {
     $before = [W]::GetForegroundWindow()
 
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    Start-Process -FilePath $Exe | Out-Null    # what the desktop shortcut does
+    Start-Again
     $ok = Wait-Until { $w = Rack-Window; ($w -ne [IntPtr]::Zero) -and (-not [W]::IsIconic($w)) -and ([W]::GetForegroundWindow() -eq $w) } 15
     $sw.Stop()
     Start-Sleep -Milliseconds 500
@@ -174,6 +188,7 @@ catch { Write-Host "::error::$($_.Exception.Message)"; $code = 1 }
 finally {
   Remove-Item Env:RACK_NO_FRONT -ErrorAction SilentlyContinue
   Stop-Rack
+  if ($viaTask) { Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue }
   if ($blockerProc -and -not $blockerProc.HasExited) { Stop-Process -Id $blockerProc.Id -Force -ErrorAction SilentlyContinue }
   Get-Process cmd -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like "*$blockerTitle*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 }
