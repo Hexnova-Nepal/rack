@@ -40,6 +40,13 @@ public static class W {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
 
+  [DllImport("user32.dll", SetLastError = true)] public static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint flags);
+  [DllImport("user32.dll", SetLastError = true)] public static extern bool SystemParametersInfo(uint action, uint param, IntPtr value, uint flags);
+  // How long after the last input Windows keeps other programs from taking the foreground.
+  // A desktop PC has 200 seconds; build machines often have 0, which would make this check prove nothing.
+  public static uint LockTimeout() { uint v = 0; SystemParametersInfo(0x2000, 0, ref v, 0); return v; }
+  public static bool SetLockTimeout(uint ms) { return SystemParametersInfo(0x2001, 0, (IntPtr)ms, 2); }
+
   // A key press and a nudge of the mouse, as if someone were using the window in front. Windows
   // only guards the foreground for a while after the last input, and a build machine has had none.
   public static void Touch() {
@@ -96,6 +103,12 @@ $blockerTitle = "RackBlocker$PID"
 $blockerProc = Start-Process cmd.exe -ArgumentList '/k', "title $blockerTitle" -PassThru
 function Blocker { foreach ($h in [W]::All()) { if ([W]::IsWindowVisible($h) -and [W]::Title($h) -like "*$blockerTitle*") { return $h } }; return [IntPtr]::Zero }
 if (-not (Wait-Until { (Blocker) -ne [IntPtr]::Zero } 20)) { Write-Host "::warning::No desktop to test on: the console window never showed. Skipping the reopen check."; exit 0 }
+
+# make this machine guard the foreground the way a desktop PC does
+[void][W]::Force((Blocker))
+$lockWas = [W]::LockTimeout()
+$lockSet = if ($lockWas -lt 200000) { [W]::SetLockTimeout(200000) } else { $true }
+Write-Host "Foreground lock: was $lockWas ms, now $([W]::LockTimeout()) ms (set: $lockSet)"
 
 # One pass: start Rack, then ask for it again in three situations. Returns what happened in each.
 function Run-Pass([string]$Name, [bool]$NoFront) {
