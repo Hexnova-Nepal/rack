@@ -1825,7 +1825,14 @@ document.addEventListener('change', (e) => {
   if (el.dataset.act === 'exeChoice') ui.scan.exeChoice[el.dataset.id] = el.value;
   if (el.dataset.act === 'customAccent') call(R.setSettings({ accent: 'custom', accentCustom: el.value }));
   if (el.dataset.act === 'rackCount') call(R.setSettings({ rackCount: Number(el.value) }));
-  if (el.dataset.act === 'quickKey') call(R.setSettings({ quickKey: el.value }), el.value ? `Quick launch is on ${el.value.replace(/\+/g, ' + ')}` : 'Quick launch is off');
+  if (el.dataset.act === 'quickKey') {
+    // say it is on only when Windows gave Rack the shortcut; when it didn't, the panel explains
+    const key = el.value;
+    call(R.setSettings({ quickKey: key })).then(async () => {
+      const ok = (await R.state()).app.quickKeyOk !== false;
+      if (!key) toast('Quick launch is off'); else if (ok) toast(`Quick launch is on ${key.replace(/\+/g, ' + ')}`);
+    });
+  }
   if (el.dataset.act === 'wallEvery') { wall.since = 0; setWall({ every: Number(el.value) }); }
   if (el.dataset.act === 'wallRange') setWall({ [el.dataset.key]: Number(el.value) });
   if (el.dataset.act === 'selStatus' && el.value) { call(R.bulk([...ui.sel], { status: el.value === 'none' ? '' : el.value })); el.value = ''; }

@@ -103,6 +103,7 @@ Uninstalling Rack keeps your data. Rack sends nothing about you anywhere; [CODE_
 - Play stats count only what Rack timed, from the last 300 sessions of each game.
 - The quick-launch shortcut works only while Rack is running. If you turn off "Keep Rack running in the tray" and close the window, it stops.
 - A folder on a network share, or a whole drive, is not watched file by file; its new games are added within half an hour.
+- A folder that adds games by itself checks once its files have been still for 45 seconds. A download that stalls for longer than that can be added before it has finished; it works once the download completes.
 - Small cover copies are made for JPEG and PNG covers. WebP, GIF and AVIF covers are drawn at full size.
 - No controller mode yet.
 
