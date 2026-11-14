@@ -1,8 +1,9 @@
 # CI check on real Windows: starting Rack again while it is already running brings its window
 # back in front, whether Rack was closed to the tray, minimised, or sitting behind another window.
 #
-# The check starts Rack from a script, which Windows does not treat as "the user just started
-# this", so Rack gets no free pass to the foreground: the hard case. It runs twice:
+# The check puts another window in front, uses it (a key press, a mouse nudge), then starts Rack
+# from this script. Windows does not treat that as "the user just started this", so Rack gets no
+# free pass to the foreground: the hard case. It runs twice:
 #   1. with RACK_NO_FRONT=1, the way Rack 1.2.0 behaved. Shown for comparison; never fails the build.
 #   2. normally. This one must pass.
 #
@@ -36,6 +37,15 @@ public static class W {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+
+  // A key press and a nudge of the mouse, as if someone were using the window in front. Windows
+  // only guards the foreground for a while after the last input, and a build machine has had none.
+  public static void Touch() {
+    keybd_event(0x10, 0, 0, UIntPtr.Zero); keybd_event(0x10, 0, 2, UIntPtr.Zero);   // Shift down, up
+    mouse_event(1, 2, 2, 0, UIntPtr.Zero); mouse_event(1, -2, -2, 0, UIntPtr.Zero); // move, move back
+  }
 
   public static string Title(IntPtr h) { var s = new StringBuilder(512); GetWindowText(h, s, 512); return s.ToString(); }
   public static string Class(IntPtr h) { var s = new StringBuilder(256); GetClassName(h, s, 256); return s.ToString(); }
@@ -107,7 +117,9 @@ function Run-Pass([string]$Name, [bool]$NoFront) {
     Start-Sleep -Milliseconds 800
     $b = Blocker
     $inFront = [W]::Force($b)
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 300
+    [W]::Touch()
+    Start-Sleep -Milliseconds 300
     $before = [W]::GetForegroundWindow()
 
     $sw = [Diagnostics.Stopwatch]::StartNew()
