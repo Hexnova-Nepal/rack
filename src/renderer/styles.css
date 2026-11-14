@@ -361,6 +361,48 @@ textarea.input { height: auto; min-height: 84px; padding: 9px 12px; resize: vert
 .danger { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
 .warntext { color: var(--signal); font-size: 13px; }
 .note { font-size: 13px; color: var(--faint); margin: 10px 0 0; }
+
+/* ---------- play stats ---------- */
+.gridhead .spacer { flex: 1; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 22px; }
+.kpi { border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px 16px; min-width: 0; }
+.kpi b { display: block; font-family: var(--f-title); font-stretch: var(--title-stretch); font-weight: var(--title-weight); font-size: 28px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi span { display: block; font-size: 13px; color: var(--soft); }
+.kpi small { display: block; font-size: 12px; color: var(--faint); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panelhead { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.panelhead h2 { margin: 0; }
+/* a column chart: thin columns with a rounded top, growing from one baseline; lines and labels stay quiet */
+.chart { padding: 14px 0 0 54px; }
+.chart .plot { position: relative; height: 220px; border-bottom: 1px solid var(--line); }
+.chart.small { padding-left: 0; }
+.chart.small .plot { height: 96px; }
+.chart .gridline { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
+.chart .gridline span { position: absolute; right: 100%; top: -9px; margin-right: 10px; font-style: normal; font-size: 11px; color: var(--faint); white-space: nowrap; }
+.chart .cols { position: absolute; inset: 0; display: flex; align-items: stretch; margin: 0; gap: 0; }
+.chart .colwrap { flex: 1; min-width: 0; display: flex; align-items: flex-end; justify-content: center; padding: 0 1px; border-radius: 4px 4px 0 0; outline-offset: -2px; }
+.chart .col { display: block; width: 100%; max-width: 24px; border-radius: 4px 4px 0 0; background: var(--accent); }
+.chart .colwrap:hover, .chart .colwrap:focus-visible { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.chart .xaxis { display: flex; margin-top: 6px; }
+.chart .xaxis span { flex: 1; min-width: 0; text-align: center; font-size: 11px; color: var(--faint); white-space: nowrap; }
+.chart .xaxis.many span { overflow: visible; }
+.chart .xaxis span.now { color: var(--ink); font-weight: 600; }
+.toplist, .longlist { display: grid; gap: 2px; margin-top: 4px; }
+.toprow, .longrow { display: grid; align-items: center; gap: 12px; width: 100%; padding: 6px 8px; margin: 0 -8px; border: 0; border-radius: 8px; background: none; color: var(--ink); text-align: left; box-sizing: content-box; }
+.toprow { grid-template-columns: 26px minmax(0, 1.1fr) minmax(40px, 1fr) max-content; }
+.longrow { grid-template-columns: minmax(0, 1fr) max-content max-content; }
+.toprow:hover, .longrow:hover { background: var(--hover); }
+.toprow .cover { width: 26px; border-radius: 3px; }
+.toprow .cover .ph { font-size: 0; padding: 0; }
+.tname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tbar { display: block; height: 8px; }
+.tbar i { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--accent); }
+.toprow b, .longrow b { font-weight: 500; font-size: 13px; color: var(--soft); white-space: nowrap; min-width: 74px; text-align: right; }
+.longrow small { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.tip { position: fixed; z-index: 40; pointer-events: none; display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: 8px; background: var(--ink); color: var(--bg); font-size: 12px; white-space: nowrap; box-shadow: var(--menu-shadow); }
+.tip b { font-size: 14px; font-weight: 650; }
+.tip span { opacity: .78; }
+@media (max-width: 1280px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
 .actionlist { display: grid; gap: 8px; margin-bottom: 10px; }
 .actionlist .arow { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 8px; background: var(--raise); }
 .actionlist .arow small { display: block; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

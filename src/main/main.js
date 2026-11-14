@@ -990,6 +990,9 @@ function registerIpc() {
     return { ok: true };
   });
 
+  /* play stats: every session Rack has, as [game, start, minutes] */
+  handle('stats:get', () => ({ sessions: store.data.games.flatMap((g) => (g.sessions || []).map((x) => [g.id, x.start, x.minutes])) }));
+
   /* quick launch */
   handle('quick:show', () => { showQuick(); return { ok: true }; });
   handle('quick:list', () => ({ look: (store.data.settings.chrome || {}).look || null, games: quickGames() }));

@@ -1,5 +1,6 @@
 // Rack's interface. All data lives in the main process; this file draws it and sends requests back.
 import { THEMES, themeById } from './themes.js';
+import { summarise, scale, span } from './stats.mjs';
 
 const R = window.rack;
 const $ = (s, el = document) => el.querySelector(s);
@@ -37,6 +38,7 @@ const I = {
   stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>',
   x: '<path d="M7 7l10 10M17 7L7 17"/>',
   sparkle: '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M7 7l2 2M15 15l2 2M7 17l2-2M15 9l2-2"/>',
+  chart: '<path d="M5 20v-8M12 20V5M19 20v-5"/>',
 };
 const ic = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
 const SRC = { steam: 'Steam', epic: 'Epic Games', gog: 'GOG', ubisoft: 'Ubisoft Connect', ea: 'EA app', battlenet: 'Battle.net', xbox: 'Xbox', folder: 'My folders', emulator: 'Emulators', manual: 'Added by hand' };
@@ -67,6 +69,7 @@ const ui = {
   scan: { stores: null, checked: new Set(), exeChoice: {}, results: {}, progress: {}, showSkipped: false, romForm: null, error: null, storesOn: {} },
   setup: { state: 'idle', res: null, on: {} },
   found: { checked: null },
+  stats: { period: 'days', data: null, table: false },
 };
 
 /* ---------- appearance ---------- */
@@ -380,7 +383,7 @@ function renderRail() {
   const lists = LISTS.map(([k, label, icon, f]) => [k, label, icon, count((g) => (k === 'hidden' ? g.hidden : k === 'notinstalled' ? g.notInstalled && !g.hidden : visible(g)) && f(g))]).filter((l) => l[3] > 0 || (drag.active && STATUS_DROPS.includes(l[0])));
   const found = (S.found || []).length;
   $('#rail').innerHTML = `
-    <div class="nav">${nav('home', null, 'home', 'Home', null, at('home'))}${nav('games', 'all', 'grid', 'All games', count(visible), at('games', 'all'))}${nav('games', 'fav', 'star', 'Favourites', count((g) => visible(g) && g.favourite), at('games', 'fav'))}
+    <div class="nav">${nav('home', null, 'home', 'Home', null, at('home'))}${nav('games', 'all', 'grid', 'All games', count(visible), at('games', 'all'))}${nav('games', 'fav', 'star', 'Favourites', count((g) => visible(g) && g.favourite), at('games', 'fav'))}${nav('stats', null, 'chart', 'Play stats', null, at('stats'))}
       ${found ? `<button class="${at('found') ? 'on' : ''}" data-act="go" data-view="found">${ic('sparkle')}<span>New games found</span><span class="badge">${found}</span></button>` : ''}</div>
     ${lists.length ? `<div class="nav"><h3>Lists</h3>${lists.map(([k, label, icon, n]) => nav('games', `l:${k}`, icon, label, n, at('games', `l:${k}`))).join('')}</div>` : ''}
     <div class="nav"><h3>Collections</h3>
@@ -993,6 +996,69 @@ async function loadSaves(id) {
   if (ui.view === 'detail' && ui.arg === id) render();
 }
 
+/* ---------- play stats ---------- */
+
+const PERIODS = [['days', '30 days', 'the 30 days before'], ['weeks', '12 weeks', 'the 12 weeks before'], ['months', '12 months', 'the 12 months before']];
+async function loadStats() {
+  const r = await R.stats();
+  ui.stats.data = (r && r.sessions) || [];
+  if (ui.view === 'stats') render();
+}
+function renderStats() {
+  const st = ui.stats;
+  const head = `<div class="gridhead"><h1 class="title">Play stats</h1><span class="spacer"></span>
+      <div class="seg" role="group" aria-label="Period">${PERIODS.map(([v, l]) => `<button aria-pressed="${st.period === v}" data-act="statsPeriod" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+  if (!st.data) return `<div class="page">${head}<div class="bar" style="width:240px;margin-top:30px"><i></i></div></div>`;
+  const d = summarise(st.data, st.period);
+  const name = PERIODS.find((x) => x[0] === st.period);
+  if (!d.total) {
+    const ever = st.data.length > 0;
+    return `<div class="page">${head}<div class="empty" style="padding-left:0"><h2 class="title">${ever ? `Nothing played in the last ${name[1]}` : 'No play time yet'}</h2>
+      <p>${ever ? 'Pick a longer period above, or go and play something.' : 'Rack times a game whenever it sees it running, even when you start it from Steam or a shortcut. Play something and it will show up here.'}</p></div></div>`;
+  }
+  const sc = scale(Math.max(...d.buckets.map((b) => b.minutes)));
+  const game = (id) => byId(id);
+  const tile = (value, label, sub = '') => `<div class="kpi"><b class="num">${value}</b><span>${label}</span>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const delta = d.change == null ? `Nothing in ${name[2]}` : d.change === 0 ? `The same as ${name[2]}` : `${d.change > 0 ? 'Up' : 'Down'} ${Math.abs(d.change)}% on ${name[2]}`;
+  const topGame = d.top[0] && game(d.top[0].id);
+  // one label in about every five days, each week's first day, every month
+  const near = (i) => [i - 1, i + 1].some((k) => d.buckets[k] && d.buckets[k].first); // a month name next door needs the room
+  const tick = (b, i) => (st.period === 'days' ? (b.first || (i % 5 === 4 && !near(i) ? b.label : '')) : st.period === 'weeks' ? (i % 2 ? b.label : '') : b.label);
+  const chart = st.table
+    ? `<div class="tablewrap" id="stats-table" style="max-height:340px"><table><thead><tr><th>${st.period === 'days' ? 'Day' : st.period === 'weeks' ? 'Week' : 'Month'}</th><th>Time played</th><th>Sessions</th></tr></thead>
+        <tbody>${[...d.buckets].reverse().map((b) => `<tr><td>${esc(b.long)}</td><td class="num">${b.minutes ? esc(span(b.minutes)) : '—'}</td><td class="num">${b.sessions || '—'}</td></tr>`).join('')}</tbody></table></div>`
+    : `<div class="chart" role="img" aria-label="Time played per ${st.period === 'days' ? 'day' : st.period === 'weeks' ? 'week' : 'month'}, last ${name[1]}">
+        <div class="plot">${sc.ticks.map((t) => `<i class="gridline" style="bottom:${(t / sc.top) * 100}%"><span class="num">${esc(span(t))}</span></i>`).join('')}
+          <div class="cols${d.buckets.length > 12 ? ' many' : ''}">${d.buckets.map((b) => `<div class="colwrap" tabindex="0" data-tipv="${b.minutes ? esc(span(b.minutes)) : 'Nothing played'}" data-tipl="${esc(b.long)}${b.sessions ? ` · ${b.sessions} ${b.sessions === 1 ? 'session' : 'sessions'}` : ''}"><i class="col" style="height:${b.minutes ? Math.max(1.5, (b.minutes / sc.top) * 100) : 0}%"></i></div>`).join('')}</div></div>
+        <div class="xaxis${d.buckets.length > 12 ? ' many' : ''}">${d.buckets.map((b, i) => `<span class="num${b.now ? ' now' : ''}">${esc(tick(b, i))}</span>`).join('')}</div></div>`;
+  const topMax = d.top.length ? d.top[0].minutes : 1;
+  const wkMax = Math.max(1, ...d.weekdays.map((w) => w.minutes));
+  return `<div class="page">${head}
+    <div class="kpis">
+      ${tile(esc(span(d.total)), 'Time played', esc(delta))}
+      ${tile(String(d.daysPlayed), d.daysPlayed === 1 ? 'Day you played' : 'Days you played', `Out of ${d.totalDays}`)}
+      ${tile(String(d.sessions), d.sessions === 1 ? 'Session' : 'Sessions', `${esc(span(d.total / d.sessions))} on average`)}
+      ${tile(String(d.games), d.games === 1 ? 'Game played' : 'Games played', topGame ? `Most: ${esc(topGame.name)}` : '')}
+    </div>
+    <div class="panel" style="margin-top:20px"><div class="panelhead"><h2 class="title">Time played per ${st.period === 'days' ? 'day' : st.period === 'weeks' ? 'week' : 'month'}</h2><span class="spacer"></span>
+      <div class="seg" role="group" aria-label="Show as"><button aria-pressed="${!st.table}" data-act="statsTable" data-v="chart" title="Chart">${ic('chart')}</button><button aria-pressed="${st.table}" data-act="statsTable" data-v="table" title="Table">${ic('list')}</button></div></div>
+      ${chart}</div>
+    <div class="cols" style="grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);margin-top:20px">
+      <div class="panel"><h2 class="title">Most played</h2><p>In the last ${name[1]}.</p>
+        <div class="toplist">${d.top.slice(0, 10).map((t) => { const g = game(t.id); return g ? `<button class="toprow" data-act="open" data-id="${g.id}" data-gid="${g.id}" data-tipv="${esc(span(t.minutes))}" data-tipl="${esc(g.name)} · ${t.sessions} ${t.sessions === 1 ? 'session' : 'sessions'}">
+          ${coverHTML(g, { src: false, state: false, w: 40 })}<span class="tname">${esc(g.name)}</span><span class="tbar"><i style="width:${Math.max(1, (t.minutes / topMax) * 100)}%"></i></span><b class="num">${esc(span(t.minutes))}</b></button>` : ''; }).join('')}</div></div>
+      <div style="display:grid;gap:20px">
+        <div class="panel"><h2 class="title">By day of the week</h2><p>Total time on each day.</p>
+          <div class="chart small" role="img" aria-label="Time played by day of the week"><div class="plot"><div class="cols">${d.weekdays.map((w) => `<div class="colwrap" tabindex="0" data-tipv="${w.minutes ? esc(span(w.minutes)) : 'Nothing played'}" data-tipl="${w.label}"><i class="col" style="height:${w.minutes ? Math.max(2, (w.minutes / wkMax) * 100) : 0}%"></i></div>`).join('')}</div></div>
+            <div class="xaxis">${d.weekdays.map((w) => `<span>${w.label}</span>`).join('')}</div></div></div>
+        <div class="panel"><h2 class="title">Longest sessions</h2>
+          <div class="longlist">${d.longest.map((x) => { const g = game(x.id); return g ? `<button class="longrow" data-act="open" data-id="${g.id}"><span class="tname">${esc(g.name)}</span><small>${esc(ago(x.start, true))}</small><b class="num">${esc(span(x.minutes))}</b></button>` : ''; }).join('')}</div></div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:18px">These numbers count the time Rack timed itself, and Rack keeps the last 300 sessions of each game. Hours Steam reports from other PCs are in each game’s total, not here.</p>
+  </div>`;
+}
+
 /* ---------- scan ---------- */
 
 const STORE_ORDER = ['steam', 'epic', 'gog', 'ubisoft', 'ea', 'battlenet', 'xbox'];
@@ -1451,7 +1517,7 @@ function render() {
   if (rackEl && rackEl.parentNode) rackEl.remove();
   const lost = vg.lost;
   vgSet([], null);
-  view.innerHTML = { home: renderHome, games: renderGames, detail: renderDetail, scan: renderScan, settings: renderSettings, search: renderSearch, found: renderFound, setup: renderSetup }[ui.view]();
+  view.innerHTML = { home: renderHome, games: renderGames, detail: renderDetail, scan: renderScan, settings: renderSettings, search: renderSearch, found: renderFound, setup: renderSetup, stats: renderStats }[ui.view]();
   view.dataset.view = ui.view + (ui.arg || '');
   vgMount();               // gives the box its full height, so the scroll position can be put back
   view.scrollTop = keepScroll;
@@ -1472,6 +1538,7 @@ function go(view, arg = null) {
   if (view === 'scan' && !ui.scan.stores) scanStores();
   if (view !== 'detail') ui.detail.id = null;
   if (view === 'found') ui.found.checked = null;
+  if (view === 'stats') loadStats();
   render();
   $('#view').scrollTop = 0;
 }
@@ -1678,6 +1745,8 @@ const ACT = {
   setShade: (el) => call(R.setSettings({ [el.dataset.key]: el.dataset.v })),
   setFont: (el) => call(R.setSettings({ font: el.dataset.v })),
   quickTry: () => R.quickShow(),
+  statsPeriod: (el) => { ui.stats.period = el.dataset.v; render(); },
+  statsTable: (el) => { ui.stats.table = el.dataset.v === 'table'; render(); },
   effects: () => call(R.setSettings({ effects: S.settings.effects === 'low' ? 'full' : 'low' })),
   wallSource: (el) => setWall({ source: el.dataset.v }),
   hideRow: (el) => { const rows = homeRows(); const r = rows.find((x) => x.id === el.dataset.row); if (r) { r.on = false; saveRows(rows); toast(`Hid ${rowName(r.id)}. Bring it back in Settings › Home.`); } },
@@ -1841,6 +1910,26 @@ document.addEventListener('pointerout', (e) => {
   const t = e.target.closest && e.target.closest('.thumbs');
   if (t && !t.contains(e.relatedTarget) && rackHandle && rackHandle.pick) rackHandle.pick(-1);
 });
+
+/* ---------- tooltips on chart marks: the value, then what it is ---------- */
+
+const tip = document.createElement('div');
+tip.className = 'tip'; tip.hidden = true;
+tip.innerHTML = '<b class="num"></b><span></span>';
+document.body.appendChild(tip);
+function showTip(el) {
+  tip.firstChild.textContent = el.dataset.tipv; tip.lastChild.textContent = el.dataset.tipl;
+  tip.hidden = false;
+  const mark = el.querySelector('.col, .tbar') || el, r = mark.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  tip.style.left = `${Math.round(Math.max(8, Math.min(window.innerWidth - t.width - 8, r.left + r.width / 2 - t.width / 2)))}px`;
+  tip.style.top = `${Math.round(Math.max(8, (el.classList.contains('colwrap') ? r.top : el.getBoundingClientRect().top) - t.height - 8))}px`;
+}
+const tipOf = (e) => (e.target.closest ? e.target.closest('[data-tipv]') : null);
+document.addEventListener('pointerover', (e) => { const el = tipOf(e); if (el) showTip(el); });
+document.addEventListener('pointerout', (e) => { const el = tipOf(e); if (el && !el.contains(e.relatedTarget)) tip.hidden = true; });
+document.addEventListener('focusin', (e) => { const el = tipOf(e); if (el && el.matches(':focus-visible')) showTip(el); });
+document.addEventListener('focusout', (e) => { if (tipOf(e)) tip.hidden = true; });
+$('#view').addEventListener('scroll', () => { tip.hidden = true; }, { passive: true });
 
 /* ---------- dragging ---------- */
 // Pointer-based, so it works the same for game tiles, list rows, desktop icons and Home rows.
@@ -2024,7 +2113,7 @@ R.onScanProgress((p) => {
   const m = document.querySelector(`.folder[data-folder="${p.id}"] .muted`);
   if (m) m.textContent = progressText(p);
 });
-R.onState((s) => { S = s; render(); });
+R.onState((s) => { S = s; render(); if (ui.view === 'stats') loadStats(); });
 R.onTheme(() => applyAppearance());
 R.onGo((v) => (typeof v === 'string' ? go(v) : go(v.view, v.arg)));
 R.onMenu(({ action, ids, id }) => {

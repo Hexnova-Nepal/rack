@@ -371,6 +371,56 @@ test('quick launch: finding a game from a few letters', async () => {
   assert.strictEqual(search(games, 'e', 3).length, 3);
 });
 
+test('stats: sessions added up by day, week and month', async () => {
+  const { summarise, buckets, scale, span } = await import(require('url').pathToFileURL(path.join(ROOT, 'src', 'renderer', 'stats.mjs')).href);
+  const now = new Date(2026, 10, 14, 20, 0); // Saturday 14 November 2026, in the evening
+  const at = (y, m, d, h = 12) => new Date(y, m, d, h).getTime();
+  const sessions = [
+    ['a', at(2026, 10, 14, 9), 60], ['a', at(2026, 10, 14, 18), 30],   // today
+    ['b', at(2026, 10, 13, 23), 120],                                   // yesterday, late: counts for yesterday
+    ['a', at(2026, 10, 9), 45],                                         // Monday of this week
+    ['c', at(2026, 10, 8), 200],                                        // Sunday of last week
+    ['b', at(2026, 9, 20), 90],                                         // 25 days ago
+    ['c', at(2026, 9, 10), 500],                                        // 35 days ago: the period before
+    ['a', at(2026, 0, 5), 300],                                         // January
+    ['a', at(2025, 10, 20), 999],                                       // more than twelve months ago
+    ['z', at(2026, 10, 12), 0], ['z', 0, 50],                           // nothing to count
+  ];
+  const d = summarise(sessions, 'days', now);
+  assert.strictEqual(d.buckets.length, 30);
+  assert.strictEqual(d.buckets.at(-1).long, 'Today'); assert.strictEqual(d.buckets.at(-1).minutes, 90);
+  assert.strictEqual(d.buckets.at(-2).long, 'Yesterday'); assert.strictEqual(d.buckets.at(-2).minutes, 120);
+  assert.strictEqual(d.buckets[0].long, 'Fri 16 Oct');
+  assert.strictEqual(d.total, 60 + 30 + 120 + 45 + 200 + 90);
+  assert.strictEqual(d.sessions, 6); assert.strictEqual(d.games, 3); assert.strictEqual(d.daysPlayed, 5); assert.strictEqual(d.totalDays, 30);
+  assert.deepStrictEqual(d.top.map((g) => [g.id, g.minutes, g.sessions]), [['b', 210, 2], ['c', 200, 1], ['a', 135, 3]]);
+  assert.deepStrictEqual(d.longest.map((s) => s.minutes), [200, 120, 90, 60, 45]);
+  assert.strictEqual(d.before, 500); assert.strictEqual(d.change, 9);
+  assert.strictEqual(d.weekdays.find((w) => w.label === 'Sat').minutes, 90);
+  assert.strictEqual(d.weekdays.find((w) => w.label === 'Sun').minutes, 200);
+  // weeks run Monday to Sunday
+  const w = summarise(sessions, 'weeks', now);
+  assert.strictEqual(w.buckets.length, 12);
+  assert.strictEqual(w.buckets.at(-1).long, 'This week'); assert.strictEqual(w.buckets.at(-1).minutes, 60 + 30 + 120 + 45);
+  assert.strictEqual(w.buckets.at(-2).long, 'Week of 2 Nov'); assert.strictEqual(w.buckets.at(-2).minutes, 200);
+  // calendar months, twelve of them
+  const m = summarise(sessions, 'months', now);
+  assert.deepStrictEqual(m.buckets.map((b) => b.label), ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov']);
+  assert.strictEqual(m.buckets.at(-1).minutes, 455); assert.strictEqual(m.buckets.at(-2).minutes, 590); assert.strictEqual(m.buckets[1].minutes, 300);
+  assert.strictEqual(m.total, 455 + 590 + 300, 'the session from over a year ago is left out');
+  assert.strictEqual(m.buckets[1].long, 'Jan 2026');
+  // nothing played
+  const e = summarise([], 'days', now);
+  assert.strictEqual(e.total, 0); assert.strictEqual(e.change, null); assert.deepStrictEqual(e.top, []);
+  assert.strictEqual(buckets('days', new Date(2026, 2, 1)).length, 30);
+  // the chart's scale: a round top, at most four lines
+  assert.deepStrictEqual(scale(95), { top: 120, ticks: [30, 60, 90, 120] });
+  assert.deepStrictEqual(scale(0), { top: 5, ticks: [5] });
+  assert.deepStrictEqual(scale(700), { top: 720, ticks: [180, 360, 540, 720] });
+  assert.ok(scale(100000).ticks.length <= 4);
+  assert.strictEqual(span(45), '45 min'); assert.strictEqual(span(120), '2 h'); assert.strictEqual(span(150), '2 h 30 min');
+});
+
 test('window: opens where a screen can show it', () => {
   const { placeOnScreen } = req('window');
   const one = [{ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }];
