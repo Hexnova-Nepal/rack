@@ -43,6 +43,7 @@ const DEFAULT = {
     sort: 'lastPlayed',
     setupDone: false,
     trayHintShown: false,
+    quickKey: 'Ctrl+Alt+Space', // the quick-launch shortcut; '' is off
     // the picture behind the app's screens
     wallpaper: {
       source: 'off',            // off | pictures | art | both

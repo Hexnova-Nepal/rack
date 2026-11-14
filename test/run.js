@@ -340,6 +340,37 @@ test('thumbs: a small copy per cover, made once, and covers that are used as the
   assert.deepStrictEqual(fs.readdirSync(dir), ['b.png']);
 });
 
+test('quick launch: finding a game from a few letters', async () => {
+  const { score, search, fold } = await import(require('url').pathToFileURL(path.join(ROOT, 'src', 'renderer', 'match.mjs')).href);
+  assert.strictEqual(fold('Pokémon: Let’s Go!'), 'pokemon let s go');
+  const names = ['The Witcher 3: Wild Hunt', 'Hollow Knight', 'Grand Theft Auto V', 'Hades', 'Hades II', 'Half-Life 2', 'Celeste', 'Stardew Valley', 'DOOM Eternal', 'Death Stranding'];
+  const games = names.map((name, i) => ({ id: 'g' + i, name, lastPlayed: i === 4 ? 500 : i === 6 ? 900 : 0 }));
+  const top = (q) => (search(games, q)[0] || {}).name;
+  assert.strictEqual(top('hades'), 'Hades', 'the whole name beats a longer one that starts the same');
+  assert.strictEqual(top('hades i'), 'Hades II');
+  assert.strictEqual(top('wit 3'), 'The Witcher 3: Wild Hunt', 'starts of words, in order');
+  assert.strictEqual(top('witcher'), 'The Witcher 3: Wild Hunt');
+  assert.strictEqual(top('gta'), 'Grand Theft Auto V', 'initials');
+  assert.strictEqual(top('hl2'), 'Half-Life 2');
+  assert.strictEqual(top('knight'), 'Hollow Knight', 'a word that isn’t the first');
+  assert.strictEqual(top('hlwknt'), 'Hollow Knight', 'letters in order, with gaps');
+  assert.strictEqual(top('STARDEW'), 'Stardew Valley', 'capitals don’t matter');
+  assert.strictEqual(top('half life'), 'Half-Life 2', 'punctuation doesn’t matter');
+  assert.deepStrictEqual(search(games, 'xyzzy'), []);
+  assert.strictEqual(score('Hollow Knight', 'hk x'), 0);
+  assert.strictEqual(score('The Elder Scrolls V: Skyrim Special Edition', 'tsm'), 0, 'three letters scattered over a long name are not a match');
+  assert.strictEqual(score('Echo Kiln', 'hol'), 0, 'a short word is not matched letter by letter');
+  assert.strictEqual(score('Echo Kiln', 'hokn'), 0, 'loose letters must start where a word starts');
+  assert.ok(score('Stardew Valley', 'stdwvl') > 0);
+  // "ha" starts three names: the one played most recently comes first among equals of the same length
+  assert.deepStrictEqual(search(games, 'ha').map((g) => g.name).slice(0, 3), ['Hades', 'Hades II', 'Half-Life 2']);
+  // "d" starts two names of different lengths; ties in score go to the last played
+  assert.ok(score('Hades', 'h') > score('Half-Life 2', 'h'));
+  // nothing typed: the games played last
+  assert.deepStrictEqual(search(games, '  ', 2).map((g) => g.name), ['Celeste', 'Hades II']);
+  assert.strictEqual(search(games, 'e', 3).length, 3);
+});
+
 test('window: opens where a screen can show it', () => {
   const { placeOnScreen } = req('window');
   const one = [{ workArea: { x: 0, y: 0, width: 1920, height: 1040 } }];

@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, protocol, net, Menu, nativeImage, Tray, Notification, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, protocol, net, Menu, nativeImage, Tray, Notification, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -63,7 +63,7 @@ function snapshot() {
     found: d.found, update: updates ? updates.state : null,
     ludusavi: { ready: !!(ludusavi && ludusavi.exe()), path: ludusavi && ludusavi.exe(), busy: [...ludusaviBusy] },
     saveBackupDir: saveDir(),
-    app: { version: app.getVersion(), portable: PORTABLE, dataDir: app.getPath('userData'), windows: process.platform === 'win32', packaged: app.isPackaged, native: winapi.available(), nativeError: winapi.available() ? null : winapi.loadError },
+    app: { version: app.getVersion(), portable: PORTABLE, dataDir: app.getPath('userData'), windows: process.platform === 'win32', packaged: app.isPackaged, native: winapi.available(), nativeError: winapi.available() ? null : winapi.loadError, quickKeyOk },
   };
 }
 
@@ -589,7 +589,7 @@ function createWindow({ view = null, now = false } = {}) {
   if (b.maximized) win.maximize();
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   if (!now) win.once('ready-to-show', () => win.show());
-  win.webContents.on('did-finish-load', () => { if (pendingView) { win.webContents.send('go', pendingView); pendingView = null; } });
+  win.webContents.on('did-finish-load', () => { if (pendingView && win) { win.webContents.send('go', pendingView); pendingView = null; } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   // text boxes get the usual Cut, Copy, Paste menu; games and collections bring their own
@@ -606,7 +606,11 @@ function createWindow({ view = null, now = false } = {}) {
       notify('Rack is still running in the tray, so it can time your games. Right-click its icon to quit.');
     }
   });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => {
+    win = null;
+    // a hidden quick-launch box would count as an open window and keep Rack running with no way in
+    if (!store.data.settings.keepInTray && quick && !quick.isDestroyed()) quick.destroy();
+  });
 }
 
 /* RACK_NO_FRONT=1 turns the bring-to-front help off, the way Rack 1.2.0 behaved (for testing). */
@@ -615,13 +619,14 @@ const FRONT = process.env.RACK_NO_FRONT !== '1';
 // Puts the window in front of other programs. Windows refuses that to a program you didn't just
 // start and flashes its taskbar button instead; the helper gets past that, and failing the helper,
 // the window is at least raised above the others.
-function toFront() {
-  if (!win || win.isDestroyed()) return;
-  if (win.isMinimized()) win.restore();
-  win.show(); win.focus();
+function toFront(w = win) {
+  if (!w || w.isDestroyed()) return;
+  if (w.isMinimized()) w.restore();
+  w.show(); w.focus();
   if (!FRONT || process.platform !== 'win32') return;
-  if (winapi.toFront(win.getNativeWindowHandle())) return;
-  win.setAlwaysOnTop(true); win.moveTop(); win.setAlwaysOnTop(false);
+  if (winapi.toFront(w.getNativeWindowHandle())) return;
+  const top = w.isAlwaysOnTop();
+  w.setAlwaysOnTop(true); w.moveTop(); w.setAlwaysOnTop(top);
 }
 
 // asked: you asked for the window (the Rack shortcut, the tray icon), as opposed to Rack coming
@@ -637,6 +642,64 @@ function showWindow(view, { asked = false } = {}) {
   createWindow({ view, now: front });
   if (front) toFront();
 }
+
+/* ---------- quick launch: a small box on a keyboard shortcut, from anywhere in Windows ---------- */
+
+const QUICK_KEYS = ['Ctrl+Alt+Space', 'Ctrl+Shift+Space', 'Alt+Space', 'Ctrl+Alt+R'];
+const QUICK_W = 640;
+let quick = null, quickIdle = null, quickKey = '', quickKeyOk = true, quickShownAt = 0;
+
+/** Registers the shortcut from Settings. quickKeyOk is false when Windows refuses it (another program has it). */
+function registerQuickKey() {
+  const want = QUICK_KEYS.includes(store.data.settings.quickKey) ? store.data.settings.quickKey : '';
+  if (quickKey) { try { globalShortcut.unregister(quickKey); } catch { /* not registered */ } }
+  quickKey = ''; quickKeyOk = true;
+  if (!want) return;
+  try { quickKeyOk = globalShortcut.register(want, toggleQuick); } catch { quickKeyOk = false; }
+  if (quickKeyOk) quickKey = want;
+}
+const quickUp = () => !!quick && !quick.isDestroyed() && quick.isVisible();
+function toggleQuick() { if (quickUp()) hideQuick(); else showQuick(); }
+
+function showQuick() {
+  clearTimeout(quickIdle);
+  // on the screen the pointer is on, a little above the middle
+  const a = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const at = { x: Math.round(a.x + (a.width - QUICK_W) / 2), y: Math.round(a.y + Math.max(24, a.height * 0.22)) };
+  quickShownAt = Date.now();
+  if (quick && !quick.isDestroyed()) {
+    quick.setPosition(at.x, at.y);
+    quick.webContents.send('quick:show');
+    toFront(quick);
+    return;
+  }
+  const look = (store.data.settings.chrome || {}).look || {};
+  quick = new BrowserWindow({
+    ...at, width: QUICK_W, height: 96, useContentSize: true, show: false, frame: false, resizable: false, minimizable: false, maximizable: false,
+    fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, title: 'Rack quick launch', icon: iconPath(),
+    backgroundColor: HEX.test(look.raise || '') ? look.raise : '#2a303c',
+    webPreferences: { preload: path.join(__dirname, '..', 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
+  });
+  quick.setAlwaysOnTop(true, 'pop-up-menu');
+  quick.loadFile(path.join(__dirname, '..', 'renderer', 'quick.html'));
+  quick.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  quick.webContents.on('will-navigate', (e) => e.preventDefault());
+  quick.once('ready-to-show', () => { quickShownAt = Date.now(); toFront(quick); });
+  // clicking anywhere else puts it away; the first moment is skipped, while Windows is still handing over the keyboard
+  quick.on('blur', () => { if (Date.now() - quickShownAt > 300) hideQuick(); });
+  quick.on('closed', () => { quick = null; });
+}
+/** Hides the box, and closes it for good after a few minutes unused, so it holds no memory in the meantime. */
+function hideQuick() {
+  if (quickUp()) quick.hide();
+  clearTimeout(quickIdle);
+  quickIdle = setTimeout(() => { if (quick && !quick.isDestroyed() && !quick.isVisible()) quick.destroy(); }, 3 * 60000);
+}
+const quickGames = () => {
+  const running = tracker ? tracker.running() : [];
+  return store.data.games.filter((g) => !g.hidden && !g.notInstalled && !g.missing)
+    .map((g) => ({ id: g.id, name: g.name, cover: g.cover, source: g.source, platform: g.platform, total: totalMinutes(g), lastPlayed: g.lastPlayed || 0, running: running.includes(g.id) }));
+};
 
 /* ---------- right-click menus ---------- */
 
@@ -922,7 +985,19 @@ function registerIpc() {
     }
     if ('autoFind' in patch && patch.autoFind) findNew();
     if ('wallpaper' in patch) fillHeroes();
+    if ('quickKey' in patch) registerQuickKey();
     changed();
+    return { ok: true };
+  });
+
+  /* quick launch */
+  handle('quick:show', () => { showQuick(); return { ok: true }; });
+  handle('quick:list', () => ({ look: (store.data.settings.chrome || {}).look || null, games: quickGames() }));
+  handle('quick:play', async (id) => { await playGame(id); hideQuick(); return { ok: true }; });
+  handle('quick:open', (id) => { hideQuick(); if (store.game(id)) showWindow({ view: 'detail', arg: id }, { asked: true }); return { ok: true }; });
+  handle('quick:hide', () => { hideQuick(); return { ok: true }; });
+  handle('quick:size', (h) => {
+    if (quick && !quick.isDestroyed() && Number.isFinite(h)) quick.setContentSize(QUICK_W, Math.max(60, Math.min(520, Math.round(h))));
     return { ok: true };
   });
   handle('steam:owned', async () => ({ ok: true, added: await refreshOwned({ quiet: false }) }));
@@ -947,7 +1022,14 @@ function registerIpc() {
 
   handle('appearance:chrome', (c) => {
     if (!c || !HEX.test(c.color) || !HEX.test(c.symbolColor)) return { ok: false };
-    store.data.settings.chrome = { color: c.color, symbolColor: c.symbolColor, forceDark: !!c.forceDark };
+    // the theme's colours as the interface worked them out, for the quick-launch box, which can open with no main window
+    const look = {};
+    for (const k of ['bg', 'raise', 'hover', 'line', 'ink', 'soft', 'faint', 'accent', 'accentInk', 'signal']) {
+      const v = c.look && c.look[k];
+      if (typeof v === 'string' && v.length <= 80 && /^[#a-z0-9(),.%\s-]+$/i.test(v)) look[k] = v;
+    }
+    if (c.look) { look.dark = c.look.dark !== false; if (/^[a-z]{1,12}$/.test(c.look.font || '')) look.font = c.look.font; }
+    store.data.settings.chrome = { color: c.color, symbolColor: c.symbolColor, forceDark: !!c.forceDark, look };
     store.save();
     applyTheme();
     return { ok: true };
@@ -1149,6 +1231,7 @@ app.whenReady().then(async () => {
   registerIpc();
   checkMissing();
   ensureTray();
+  registerQuickKey();
   const argv = process.argv.slice(1);
   const launched = handleArgs(argv);
   if (!launched && !argv.includes('--hidden')) createWindow();
@@ -1166,8 +1249,10 @@ app.whenReady().then(async () => {
 
 // starting Rack again while it runs (its shortcut, the Start menu) brings this copy's window back
 app.on('second-instance', (_e, argv) => { if (!handleArgs(argv.slice(1))) showWindow(null, { asked: true }); });
+app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('before-quit', () => {
   quitting = true;
+  if (quick && !quick.isDestroyed()) quick.destroy();
   // a game still running when Rack closes keeps the time seen so far
   if (tracker && store) for (const s of tracker.flush()) {
     const g = store.game(s.id);

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' rack: data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rack quick launch</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="quick.css">
+</head>
+<body class="quick">
+<div class="qbox" id="qbox">
+  <label class="qin"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+    <input id="q" type="text" placeholder="Play a game" aria-label="Play a game" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="qlist" aria-autocomplete="list"><kbd>Esc</kbd></label>
+  <div class="qhead" id="qhead"></div>
+  <div class="qlist" id="qlist" role="listbox" aria-label="Games"></div>
+  <div class="qfoot" id="qfoot"><span><kbd>↑</kbd><kbd>↓</kbd> choose</span><span><kbd>Enter</kbd> play</span><span><kbd>Ctrl</kbd><kbd>Enter</kbd> details</span></div>
+</div>
+<script type="module" src="quick.js"></script>
+</body>
+</html>

@@ -85,6 +85,7 @@ const RACK_PREVIEW = {
 };
 const DARK_SHADES = [['graphite', 'Graphite', '#1b1f27'], ['midnight', 'Midnight', '#0f1422'], ['black', 'Black', '#09090b'], ['warm', 'Warm', '#1d1a18']];
 const LIGHT_SHADES = [['cool', 'Cool', '#eef0f3'], ['paper', 'Paper', '#f3efe7'], ['white', 'White', '#f8f9fa']];
+const QUICK_KEYS = ['Ctrl+Alt+Space', 'Ctrl+Shift+Space', 'Alt+Space', 'Ctrl+Alt+R'];
 const FONTS = [['rack', 'Rack', 'Wide titles, crisp text'], ['clean', 'Clean', 'One modern face'], ['arcade', 'Arcade', 'Squared, techy titles'], ['scifi', 'Sci-fi', 'Slanted, futuristic'], ['classic', 'Classic', 'The 1.0 look']];
 
 const hex = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(h).trim()); if (!m) return null; const n = parseInt(m[1], 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
@@ -145,7 +146,12 @@ function applyAppearance() {
   // the title bar's window buttons are drawn by Windows: tell the main process their colours,
   // and that a dark-only theme wants Windows' own parts (menus, scrollbars) dark as well
   const cs = getComputedStyle(root);
-  const chrome = { color: cs.getPropertyValue('--rail').trim(), symbolColor: cs.getPropertyValue('--soft').trim(), forceDark: darkOnly(t) };
+  const v = (k) => cs.getPropertyValue(k).trim();
+  const chrome = {
+    color: v('--rail'), symbolColor: v('--soft'), forceDark: darkOnly(t),
+    // the same colours for the quick-launch box, which has no theme logic of its own
+    look: { bg: v('--bg'), raise: v('--raise'), hover: v('--hover'), line: v('--line'), ink: v('--ink'), soft: v('--soft'), faint: v('--faint'), accent: v('--accent'), accentInk: v('--accent-ink'), signal: v('--signal'), dark, font: root.dataset.font },
+  };
   const sig = JSON.stringify(chrome);
   if (sig !== lastChrome && R.setChrome) { lastChrome = sig; R.setChrome(chrome); }
 }
@@ -1251,6 +1257,10 @@ function renderSettings() {
       <div class="panel"><h2 class="title">Covers</h2><p>Steam games, and games that are on the Steam store, get Steam’s cover art with no setup. For others, Rack asks SteamGridDB, which needs a free API key.</p>
         <div class="field"><label for="sgdb">SteamGridDB API key</label><div class="input"><input id="sgdb" type="password" value="${esc(s.sgdbKey)}" placeholder="Paste your key" autocomplete="off" spellcheck="false"><button class="btn small" data-act="saveKey">Save key</button></div></div>
         <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn" data-act="getKey">${ic('ext')}Get a free key</button><button class="btn ghost" data-act="fillArt">Find missing covers now</button></div></div>
+      <div class="panel"><h2 class="title">Quick launch</h2><p>Press the shortcut anywhere in Windows, type a few letters of a game’s name, and press Enter. It works whenever Rack is running, including in the tray.</p>
+        <div class="field"><span>Shortcut</span><div class="countrow"><select data-act="quickKey" aria-label="Quick launch shortcut">${[['', 'Off'], ...QUICK_KEYS.map((k) => [k, k.replace(/\+/g, ' + ')])].map(([k, l]) => `<option value="${k}" ${(s.quickKey || '') === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <button class="btn small" data-act="quickTry">${ic('play')}Try it</button></div></div>
+        ${s.quickKey && S.app.quickKeyOk === false ? '<p class="note warnnote">Windows wouldn’t give Rack this shortcut, so another program is probably using it. Pick a different one.</p>' : ''}</div>
       <div class="panel"><h2 class="title">Tray and startup</h2>
         ${tog('keepInTray', 'Keep Rack running in the tray', 'Closing the window keeps Rack timing games. Quit from the tray icon.')}
         ${tog('startWithWindows', 'Start Rack when Windows starts', S.app.portable ? 'Starts quietly in the tray. Moving the portable file breaks this.' : 'Starts quietly in the tray')}</div>
@@ -1667,6 +1677,7 @@ const ACT = {
   setAccent: (el) => call(R.setSettings({ accent: el.dataset.v })),
   setShade: (el) => call(R.setSettings({ [el.dataset.key]: el.dataset.v })),
   setFont: (el) => call(R.setSettings({ font: el.dataset.v })),
+  quickTry: () => R.quickShow(),
   effects: () => call(R.setSettings({ effects: S.settings.effects === 'low' ? 'full' : 'low' })),
   wallSource: (el) => setWall({ source: el.dataset.v }),
   hideRow: (el) => { const rows = homeRows(); const r = rows.find((x) => x.id === el.dataset.row); if (r) { r.on = false; saveRows(rows); toast(`Hid ${rowName(r.id)}. Bring it back in Settings › Home.`); } },
@@ -1739,6 +1750,7 @@ document.addEventListener('change', (e) => {
   if (el.dataset.act === 'exeChoice') ui.scan.exeChoice[el.dataset.id] = el.value;
   if (el.dataset.act === 'customAccent') call(R.setSettings({ accent: 'custom', accentCustom: el.value }));
   if (el.dataset.act === 'rackCount') call(R.setSettings({ rackCount: Number(el.value) }));
+  if (el.dataset.act === 'quickKey') call(R.setSettings({ quickKey: el.value }), el.value ? `Quick launch is on ${el.value.replace(/\+/g, ' + ')}` : 'Quick launch is off');
   if (el.dataset.act === 'wallEvery') { wall.since = 0; setWall({ every: Number(el.value) }); }
   if (el.dataset.act === 'wallRange') setWall({ [el.dataset.key]: Number(el.value) });
   if (el.dataset.act === 'selStatus' && el.value) { call(R.bulk([...ui.sel], { status: el.value === 'none' ? '' : el.value })); el.value = ''; }
@@ -2014,7 +2026,7 @@ R.onScanProgress((p) => {
 });
 R.onState((s) => { S = s; render(); });
 R.onTheme(() => applyAppearance());
-R.onGo((v) => go(v));
+R.onGo((v) => (typeof v === 'string' ? go(v) : go(v.view, v.arg)));
 R.onMenu(({ action, ids, id }) => {
   if (action === 'open') go('detail', ids[0]);
   if (action === 'deskAdd') deskAdd(ids || []);
